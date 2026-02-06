@@ -1,5 +1,7 @@
 # Octos - LLM Agent Pipeline Orchestrator
 
+![Octos](images/octos.png)
+
 Minimalist orchestrator that executes YAML pipelines with CLI agents (kiro-cli, claude-code, etc.)
 
 Automate multi-step LLM workflows with checkpoints, artifacts, and conditional execution.

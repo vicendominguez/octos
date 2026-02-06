@@ -204,8 +204,12 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 			}
 		}
 
+		// Build prompt before callback
+		prompt := interpolate(step.Prompt, ctx)
+		fullPrompt := buildPrompt(ctx, prompt)
+
 		if onStart != nil {
-			onStart(i, "")
+			onStart(i, fullPrompt)
 		}
 
 		start := time.Now()
@@ -215,9 +219,6 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 
 		// Snapshot files before execution
 		beforeFiles := scanDirectory(".")
-
-		prompt := interpolate(step.Prompt, ctx)
-		fullPrompt := buildPrompt(ctx, prompt)
 
 		var output string
 		var err error

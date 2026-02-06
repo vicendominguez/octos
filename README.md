@@ -250,6 +250,45 @@ steps:
 - `equals value` - Exact match
 - `not_empty` - Output is not empty
 
+### 🔀 Per-Step Agent Override
+
+Use different agents for different steps to optimize costs or capabilities:
+
+```yaml
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--model", "haiku"]  # Default: cheap model
+
+steps:
+  - name: analyze
+    prompt: "List all functions and their complexity"
+    # Uses default agent (haiku - cheap)
+  
+  - name: complex-refactor
+    agent:
+      cmd: "kiro-cli"
+      args: ["chat", "--no-interactive", "--model", "sonnet"]
+    prompt: "Refactor the authentication system with best practices"
+    # Uses sonnet only for this step (expensive but powerful)
+  
+  - name: add-tests
+    prompt: "Add unit tests for the refactored code"
+    # Back to default agent (haiku - cheap)
+  
+  - name: review
+    agent:
+      cmd: "claude-code"
+      args: ["--no-interactive"]
+    prompt: "Review all changes and suggest improvements"
+    # Uses different CLI tool entirely
+```
+
+**Benefits:**
+- Optimize costs by using cheaper models for simple tasks
+- Use powerful models only when needed
+- Mix different CLI agents in the same pipeline
+- Each step can have its own agent configuration
+
 ### 🔄 Resume & Checkpoints
 
 Automatically saves state after each successful step:

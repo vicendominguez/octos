@@ -20,11 +20,12 @@ type AgentConfig struct {
 }
 
 type Step struct {
-	Name     string `yaml:"name"`
-	Prompt   string `yaml:"prompt"`
-	SaveTo   string `yaml:"save_to"`
-	LoadFrom string `yaml:"load_from"`
-	When     string `yaml:"when"`
+	Name     string       `yaml:"name"`
+	Prompt   string       `yaml:"prompt"`
+	SaveTo   string       `yaml:"save_to"`
+	LoadFrom string       `yaml:"load_from"`
+	When     string       `yaml:"when"`
+	Agent    *AgentConfig `yaml:"agent,omitempty"`
 }
 
 func LoadPipeline(path string) (*Pipeline, error) {

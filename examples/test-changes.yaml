@@ -1,0 +1,12 @@
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools", "--wrap=always"]
+
+steps:
+  - name: create-test-file
+    prompt: |
+      Create a simple test file called test-output.txt with the text "Hello from Octos test"
+  
+  - name: modify-readme
+    prompt: |
+      Add a new line at the end of README.md that says "<!-- Test modification -->"

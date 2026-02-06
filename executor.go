@@ -220,15 +220,21 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		// Snapshot files before execution
 		beforeFiles := scanDirectory(".")
 
+		// Use step-specific agent or fallback to pipeline agent
+		agent := p.Agent
+		if step.Agent != nil {
+			agent = *step.Agent
+		}
+
 		var output string
 		var err error
 
 		if onStream != nil {
-			output, err = runAgentWithStreaming(p.Agent, fullPrompt, func(line string) {
+			output, err = runAgentWithStreaming(agent, fullPrompt, func(line string) {
 				onStream(i, line)
 			})
 		} else {
-			output, err = runAgent(p.Agent, fullPrompt)
+			output, err = runAgent(agent, fullPrompt)
 		}
 
 		duration := time.Since(start)

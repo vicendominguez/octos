@@ -30,31 +30,38 @@ type StepState struct {
 	StartTime time.Time
 	Output    string
 	Error     error
+	Prompt    string
 }
 
 type TUIModel struct {
-	pipeline      *Pipeline
-	steps         []StepState
-	currentStep   int
-	selectedStep  int
-	outputView    viewport.Model
-	diffView      viewport.Model
-	progress      progress.Model
-	width         int
-	height        int
-	startTime     time.Time
-	endTime       time.Time
-	filesChanged  []string
-	quitting      bool
-	resuming      bool
-	program       *tea.Program
-	pipelineEnded bool
-	statusMsg     string
-	workingDir    string
-	gitBranch     string
+	pipeline       *Pipeline
+	steps          []StepState
+	currentStep    int
+	selectedStep   int
+	stepsView      viewport.Model
+	outputView     viewport.Model
+	diffView       viewport.Model
+	progress       progress.Model
+	width          int
+	height         int
+	startTime      time.Time
+	endTime        time.Time
+	filesChanged   []string
+	quitting       bool
+	resuming       bool
+	program        *tea.Program
+	pipelineEnded  bool
+	statusMsg      string
+	workingDir     string
+	gitBranch      string
+	userScrolling  bool
+	showPrompt     bool
 }
 
-type stepStartMsg struct{ index int }
+type stepStartMsg struct {
+	index  int
+	prompt string
+}
 type stepOutputMsg struct {
 	index  int
 	output string
@@ -176,6 +183,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 func (m *TUIModel) Init() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
+		tea.EnableMouseAllMotion,
 	)
 }
 
@@ -208,6 +216,12 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			panelHeight = 5
 		}
 
+		stepsHeight := contentHeight - 16
+		if stepsHeight < 10 {
+			stepsHeight = 10
+		}
+
+		m.stepsView = viewport.New(stepsWidth-4, stepsHeight-3)
 		m.outputView = viewport.New(panelWidth-4, panelHeight)
 		m.diffView = viewport.New(panelWidth-4, panelHeight)
 		
@@ -222,37 +236,71 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.userScrolling = true
+			m.stepsView.LineUp(3)
+			m.outputView.LineUp(3)
+			m.diffView.LineUp(3)
+			return m, nil
+		case tea.MouseWheelDown:
+			m.userScrolling = true
+			m.stepsView.LineDown(3)
+			m.outputView.LineDown(3)
+			m.diffView.LineDown(3)
+			return m, nil
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		
+		case "esc":
+			if m.showPrompt {
+				m.showPrompt = false
+			}
+			return m, nil
+		
+		case "enter":
+			if m.pipelineEnded {
+				m.showPrompt = !m.showPrompt
+			}
+			return m, nil
+		
 		case "j", "down":
 			if m.pipelineEnded && m.selectedStep < len(m.steps)-1 {
 				m.selectedStep++
+				m.scrollToStep(m.selectedStep)
 			}
 			return m, nil
 		
 		case "k", "up":
 			if m.pipelineEnded && m.selectedStep > 0 {
 				m.selectedStep--
+				m.scrollToStep(m.selectedStep)
 			}
 			return m, nil
 		
 		case "ctrl+j":
+			m.userScrolling = true
 			m.outputView.LineDown(1)
 			return m, nil
 		
 		case "ctrl+k":
+			m.userScrolling = true
 			m.outputView.LineUp(1)
 			return m, nil
 		
 		case "ctrl+d":
+			m.userScrolling = true
 			m.outputView.HalfViewDown()
 			return m, nil
 		
 		case "ctrl+u":
+			m.userScrolling = true
 			m.outputView.HalfViewUp()
 			return m, nil
 		}
@@ -267,8 +315,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.index < len(m.steps) {
 			m.steps[msg.index].Status = StatusRunning
 			m.steps[msg.index].StartTime = time.Now()
+			m.steps[msg.index].Prompt = msg.prompt
 			m.currentStep = msg.index
 			m.statusMsg = fmt.Sprintf("Running step %d/%d: %s", msg.index+1, len(m.steps), m.steps[msg.index].Name)
+			m.scrollToStep(msg.index)
+			m.userScrolling = false // Reset on new step
 		}
 		return m, nil
 
@@ -287,7 +338,6 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.steps[msg.index].Output += msg.line + "\n"
 			if msg.index == m.currentStep {
 				m.outputView.SetContent(m.steps[msg.index].Output)
-				m.outputView.GotoBottom()
 			}
 		}
 		return m, nil
@@ -393,6 +443,8 @@ func (m *TUIModel) View() string {
 		stepsView.WriteString("\n")
 	}
 
+	m.stepsView.SetContent(stepsView.String())
+
 	// Current step output
 	currentStepName := "Waiting..."
 	outputContent := "Pipeline starting..."
@@ -416,6 +468,12 @@ func (m *TUIModel) View() string {
 	}
 	
 	m.outputView.SetContent(outputContent)
+	
+	// Auto-scroll to bottom only if user hasn't manually scrolled and step is running
+	if !m.pipelineEnded && !m.userScrolling && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
+		m.outputView.GotoBottom()
+	}
+	
 	outputPanel := panelStyle.Width(panelWidth).Render(
 		lipgloss.NewStyle().Foreground(neonCyan).Bold(true).Render(fmt.Sprintf("OUTPUT: %s", currentStepName)) + "\n\n" +
 			m.outputView.View(),
@@ -494,6 +552,8 @@ func (m *TUIModel) View() string {
 		panelHeight = 10
 	}
 
+	stepsPanel := panelStyle.Width(stepsWidth).Height(panelHeight).Render(m.stepsView.View())
+
 	// Layout with margins
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -502,7 +562,7 @@ func (m *TUIModel) View() string {
 		"",
 		lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			panelStyle.Width(stepsWidth).Height(panelHeight).Render(stepsView.String()),
+			stepsPanel,
 			lipgloss.JoinVertical(
 				lipgloss.Left,
 				outputPanel,
@@ -516,16 +576,105 @@ func (m *TUIModel) View() string {
 		lipgloss.NewStyle().Foreground(neonCyan).Faint(true).Render(
 			func() string {
 				if m.pipelineEnded {
-					return "⌨  [↑↓/jk] Navigate steps │ [Ctrl+j/k] Scroll output │ [Ctrl+d/u] Page │ [q] Quit"
+					return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
 				}
-				return "⌨  [Ctrl+j/k] Scroll output │ [Ctrl+d/u] Page │ [q] Quit"
+				return "⌨  [Ctrl+j/k] Scroll output │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
 			}(),
 		),
 	)
 
+	// Render popup if showing prompt
+	if m.showPrompt && m.pipelineEnded && m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Prompt != "" {
+		content = m.renderPromptPopup(content)
+	}
+
 	// Add margins
 	return lipgloss.NewStyle().Margin(1, 2).Render(content)
 }
+
+func (m *TUIModel) scrollToStep(stepIndex int) {
+	if stepIndex < 0 || stepIndex >= len(m.steps) {
+		return
+	}
+	
+	// Each step takes 1 line, plus 2 lines for header
+	lineHeight := 1
+	targetLine := stepIndex * lineHeight
+	
+	// Center the target step in viewport
+	halfHeight := m.stepsView.Height / 2
+	scrollTo := targetLine - halfHeight
+	if scrollTo < 0 {
+		scrollTo = 0
+	}
+	
+	m.stepsView.SetYOffset(scrollTo)
+}
+
+func (m *TUIModel) renderPromptPopup(baseContent string) string {
+	prompt := m.steps[m.selectedStep].Prompt
+	stepName := m.steps[m.selectedStep].Name
+	
+	// Popup dimensions
+	popupWidth := m.width * 3 / 4
+	if popupWidth > 100 {
+		popupWidth = 100
+	}
+	popupHeight := m.height * 2 / 3
+	if popupHeight > 30 {
+		popupHeight = 30
+	}
+	
+	// Create popup style
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(neonMagenta).
+		Background(darkerBg).
+		Padding(1, 2).
+		Width(popupWidth).
+		Height(popupHeight)
+	
+	// Title
+	popupTitle := lipgloss.NewStyle().
+		Foreground(neonMagenta).
+		Bold(true).
+		Render(fmt.Sprintf("PROMPT: %s", stepName))
+	
+	// Prompt content with wrapping
+	promptContent := lipgloss.NewStyle().
+		Foreground(neonCyan).
+		Width(popupWidth - 6).
+		Render(prompt)
+	
+	// Footer
+	footer := lipgloss.NewStyle().
+		Foreground(neonYellow).
+		Faint(true).
+		Render("[Enter/Esc] Close")
+	
+	popupContent := lipgloss.JoinVertical(
+		lipgloss.Left,
+		popupTitle,
+		"",
+		promptContent,
+		"",
+		footer,
+	)
+	
+	popup := popupStyle.Render(popupContent)
+	
+	// Overlay popup on base content
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		popup,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("0")),
+	)
+}
+
 
 func (m *TUIModel) updateDiffView() {
 	var content strings.Builder
@@ -538,9 +687,9 @@ func (m *TUIModel) updateDiffView() {
 
 func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program) {
 	RunPipelineWithCallbacks(p,
-		func(stepIndex int, _ string) {
+		func(stepIndex int, prompt string) {
 			if program != nil {
-				program.Send(stepStartMsg{index: stepIndex})
+				program.Send(stepStartMsg{index: stepIndex, prompt: prompt})
 			}
 		},
 		func(stepIndex int, output string) {

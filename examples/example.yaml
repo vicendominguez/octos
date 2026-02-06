@@ -1,0 +1,29 @@
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools", "--wrap=always"]
+
+context:
+  role: "Senior backend engineer"
+  rules:
+    - "No modificar tests"
+    - "Preferir cambios pequeños"
+    - "Usar Go idiomático"
+
+steps:
+  - name: analyze
+    prompt: |
+      Analiza este directorio y lista los archivos Go que encuentres.
+      Describe brevemente qué hace cada uno.
+
+  - name: suggest
+    prompt: |
+      Basándote en el análisis anterior:
+      {{analyze.output}}
+ 
+      Sugiere una mejora simple que podamos hacer.
+      Mantén estas reglas:
+      {{context.rules}}
+  - name: implement
+    prompt: |
+      Escribe un archivo increible.md markdown. En raw. Solo la respuesta con el
+      {{suggest.output}}

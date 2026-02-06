@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o octos-linux-amd64
+          GOOS=linux GOARCH=arm64 go build -o octos-linux-arm64
+          GOOS=darwin GOARCH=amd64 go build -o octos-darwin-amd64
+          GOOS=darwin GOARCH=arm64 go build -o octos-darwin-arm64
+          GOOS=windows GOARCH=amd64 go build -o octos-windows-amd64.exe
+
+      - name: Build Debian package
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          mkdir -p deb/octos_${VERSION}_amd64/DEBIAN
+          mkdir -p deb/octos_${VERSION}_amd64/usr/local/bin
+          
+          cp octos-linux-amd64 deb/octos_${VERSION}_amd64/usr/local/bin/octos
+          chmod +x deb/octos_${VERSION}_amd64/usr/local/bin/octos
+          
+          cat > deb/octos_${VERSION}_amd64/DEBIAN/control <<EOF
+          Package: octos
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: @vicendominguez <https://vicendominguez.github.io>
+          Description: LLM Agent Pipeline Orchestrator
+           Minimalist orchestrator that executes YAML pipelines with CLI agents.
+          EOF
+          
+          dpkg-deb --build deb/octos_${VERSION}_amd64
+          mv deb/octos_${VERSION}_amd64.deb octos_${VERSION}_amd64.deb
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            octos-linux-amd64
+            octos-linux-arm64
+            octos-darwin-amd64
+            octos-darwin-arm64
+            octos-windows-amd64.exe
+            octos_*.deb

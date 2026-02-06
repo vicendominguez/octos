@@ -1,0 +1,18 @@
+[tasks.build]
+run = "go build -o octos"
+
+[tasks.test]
+run = "go test ./..."
+
+[tasks.fmt]
+run = "go fmt ./..."
+
+[tasks.vet]
+run = "go vet ./..."
+
+[tasks.tidy]
+run = "go mod tidy"
+
+[tasks.run]
+run = "./octos"
+depends = ["build"]

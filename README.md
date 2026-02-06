@@ -8,6 +8,22 @@ Automate multi-step LLM workflows with checkpoints, artifacts, and conditional e
 
 ## Installation
 
+### Homebrew (macOS)
+
+```bash
+brew tap vicendominguez/tap
+brew install octos
+```
+
+### Debian/Ubuntu
+
+```bash
+wget https://github.com/vicendominguez/octos/releases/download/v0.1.0/octos_0.1.0_amd64.deb
+sudo dpkg -i octos_0.1.0_amd64.deb
+```
+
+### From source
+
 ```bash
 go build -o octos
 ```

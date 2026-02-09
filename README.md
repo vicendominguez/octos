@@ -31,11 +31,11 @@ go build -o octos
 ## Quick Start
 
 ```bash
-# Run with interactive TUI
+# Run with interactive TUI (default)
 ./octos pipeline.yaml
 
 # Run in headless mode (CI/CD)
-./octos --tui=false pipeline.yaml
+./octos --no-tui pipeline.yaml
 
 # Resume from last checkpoint
 ./octos --resume pipeline.yaml
@@ -342,9 +342,10 @@ Automatically tracks changes during each step execution.
 
 Options:
   --version          Show version
-  --tui=false        Disable TUI (headless mode)
+  --no-tui           Disable TUI (headless mode)
   --resume           Resume from last checkpoint
   --clean            Clear saved state before running
+  --loop N           Run pipeline N times (0 = infinite in TUI, 1 in headless)
 ```
 
 ## Examples
@@ -357,7 +358,7 @@ Options:
 ./octos example-artifacts.yaml
 
 # Headless mode for CI/CD
-./octos --tui=false pipeline.yaml
+./octos --no-tui pipeline.yaml
 
 # Resume failed pipeline
 ./octos --resume pipeline.yaml

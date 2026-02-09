@@ -256,11 +256,16 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.MouseWheelDown:
-			m.userScrolling = true
 			if m.focusedPanel == FocusOutput {
 				m.outputView.LineDown(ScrollLines)
+				if m.outputView.AtBottom() {
+					m.userScrolling = false
+				} else {
+					m.userScrolling = true
+				}
 			} else {
 				m.diffView.LineDown(ScrollLines)
+				m.userScrolling = true
 			}
 			return m, nil
 		}
@@ -504,13 +509,16 @@ func (m *TUIModel) handleUpKey() (tea.Model, tea.Cmd) {
 }
 
 func (m *TUIModel) scrollPanelLines(lines int) {
-	m.userScrolling = true
-	
 	if m.focusedPanel == FocusOutput {
 		if lines > 0 {
 			m.outputView.LineDown(lines)
 		} else {
 			m.outputView.LineUp(-lines)
+		}
+		if m.outputView.AtBottom() {
+			m.userScrolling = false
+		} else {
+			m.userScrolling = true
 		}
 	} else {
 		if lines > 0 {
@@ -518,17 +526,21 @@ func (m *TUIModel) scrollPanelLines(lines int) {
 		} else {
 			m.diffView.LineUp(-lines)
 		}
+		m.userScrolling = true
 	}
 }
 
 func (m *TUIModel) scrollPanelHalfPage(down bool) {
-	m.userScrolling = true
-	
 	if m.focusedPanel == FocusOutput {
 		if down {
 			m.outputView.HalfViewDown()
 		} else {
 			m.outputView.HalfViewUp()
+		}
+		if m.outputView.AtBottom() {
+			m.userScrolling = false
+		} else {
+			m.userScrolling = true
 		}
 	} else {
 		if down {
@@ -536,6 +548,7 @@ func (m *TUIModel) scrollPanelHalfPage(down bool) {
 		} else {
 			m.diffView.HalfViewUp()
 		}
+		m.userScrolling = true
 	}
 }
 

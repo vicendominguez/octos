@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
-	useTUI := flag.Bool("tui", true, "Use TUI mode (default)")
+	noTUI := flag.Bool("no-tui", false, "Disable TUI (headless mode)")
 	showVersion := flag.Bool("version", false, "Show version")
 	resume := flag.Bool("resume", false, "Resume from last checkpoint")
 	clean := flag.Bool("clean", false, "Clean state and start fresh")
-	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = infinite, default in TUI)")
+	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = infinite in TUI, 1 in headless)")
 	flag.Parse()
 
 	if *showVersion {
@@ -23,7 +23,10 @@ func main() {
 
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Fatal("Usage: octos [--tui] [--resume] [--clean] [--loop N] <pipeline.yaml>")
+		fmt.Println("Usage: octos [options] <pipeline.yaml>")
+		fmt.Println("\nOptions:")
+		flag.PrintDefaults()
+		return
 	}
 
 	pipelineFile := args[0]
@@ -41,7 +44,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if *useTUI {
+	if !*noTUI {
 		// TUI mode
 		m := NewTUIModel(pipeline, *resume)
 		m.maxLoops = *loop

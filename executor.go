@@ -317,6 +317,12 @@ func interpolate(text string, ctx *Context) string {
 	result := text
 
 	for name, output := range ctx.Outputs {
+		// Handle artifact.xxx (without .output suffix)
+		if strings.HasPrefix(name, "artifact.") {
+			placeholder := fmt.Sprintf("{{%s}}", name)
+			result = strings.ReplaceAll(result, placeholder, output)
+		}
+		// Handle regular step outputs (with .output suffix)
 		placeholder := fmt.Sprintf("{{%s.output}}", name)
 		result = strings.ReplaceAll(result, placeholder, output)
 	}

@@ -1,0 +1,75 @@
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools", "--model", "haiku"]
+
+context:
+  role: "Senior software engineer"
+  rules:
+    - "Write clean, maintainable code"
+    - "Follow best practices"
+    - "Add comprehensive tests"
+
+steps:
+  # Step 1: Simple analysis with cheap model
+  - name: analyze-codebase
+    prompt: |
+      Analyze the codebase structure and list:
+      1. Main components and their responsibilities
+      2. Code quality issues (duplications, long functions)
+      3. Missing tests or documentation
+    save_to: analysis.txt
+
+  # Step 2: Planning with cheap model
+  - name: create-plan
+    load_from: analysis.txt
+    prompt: |
+      Based on this analysis:
+      {{artifact.analysis}}
+      
+      Create a prioritized refactoring plan with:
+      - High priority items (critical issues)
+      - Medium priority items (improvements)
+      - Low priority items (nice-to-have)
+    save_to: plan.txt
+
+  # Step 3: Complex refactoring with powerful model
+  - name: implement-high-priority
+    agent:
+      cmd: "kiro-cli"
+      args: ["chat", "--no-interactive", "--trust-all-tools", "--model", "sonnet"]
+    load_from: plan.txt
+    prompt: |
+      Implement ONLY the high-priority items from this plan:
+      {{artifact.plan}}
+      
+      Apply these rules:
+      {{context.rules}}
+      
+      Focus on correctness and maintainability.
+
+  # Step 4: Simple test generation with cheap model
+  - name: add-tests
+    prompt: |
+      Add unit tests for the refactored code.
+      Cover main functionality and edge cases.
+
+  # Step 5: Verification with cheap model
+  - name: verify
+    prompt: |
+      Verify all changes:
+      1. Run tests and check they pass
+      2. Ensure no breaking changes
+      3. Confirm code quality improved
+    save_to: verification.txt
+
+  # Step 6: Final review with powerful model (optional)
+  - name: expert-review
+    agent:
+      cmd: "kiro-cli"
+      args: ["chat", "--no-interactive", "--trust-all-tools", "--model", "sonnet"]
+    load_from: verification.txt
+    prompt: |
+      Perform expert code review:
+      {{artifact.verification}}
+      
+      Suggest any final improvements or optimizations.

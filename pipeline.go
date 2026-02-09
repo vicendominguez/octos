@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -41,6 +42,11 @@ func LoadPipeline(path string) (*Pipeline, error) {
 
 	p.File = path
 
+	// Validate pipeline
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
 	// Ensure artifacts directory exists
 	artifactsDir := filepath.Join(".octos", "artifacts")
 	if err := os.MkdirAll(artifactsDir, 0755); err != nil {
@@ -48,4 +54,26 @@ func LoadPipeline(path string) (*Pipeline, error) {
 	}
 
 	return &p, nil
+}
+
+// Validate checks if the pipeline configuration is valid
+func (p *Pipeline) Validate() error {
+	if p.Agent.Cmd == "" {
+		return fmt.Errorf("agent.cmd is required")
+	}
+	
+	if len(p.Steps) == 0 {
+		return fmt.Errorf("at least one step is required")
+	}
+	
+	for i, step := range p.Steps {
+		if step.Name == "" {
+			return fmt.Errorf("step %d: name is required", i+1)
+		}
+		if step.Prompt == "" {
+			return fmt.Errorf("step %d (%s): prompt is required", i+1, step.Name)
+		}
+	}
+	
+	return nil
 }

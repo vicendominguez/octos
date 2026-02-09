@@ -209,7 +209,7 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		fullPrompt := buildPrompt(ctx, prompt)
 
 		if onStart != nil {
-			onStart(i, fullPrompt)
+			onStart(i, prompt)
 		}
 
 		start := time.Now()

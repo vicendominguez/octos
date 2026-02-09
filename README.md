@@ -39,7 +39,27 @@ go build -o octos
 
 # Resume from last checkpoint
 ./octos --resume pipeline.yaml
+
+# Loop mode - run pipeline multiple times (Ralph loop pattern)
+./octos --loop 3 pipeline.yaml        # Run 3 times
+./octos --loop 0 pipeline.yaml        # Loop until Ctrl+C
 ```
+
+## Loop Mode (Ralph Pattern)
+
+Octos supports the **Ralph Wiggum loop** pattern - running your pipeline multiple times with fresh context each iteration, allowing the agent to iteratively refine its work.
+
+**Use cases:**
+- Iterative refinement: Agent fixes its own mistakes
+- Complex tasks: Break work into multiple passes
+- Self-healing: Retry failed steps in next iteration
+
+**TUI controls:**
+- Press `r` to restart pipeline after completion
+- Loop counter shown in title bar
+- Automatic loop limit enforcement
+
+**For full Ralph loop implementation**, check out [Chief](https://github.com/MiniCodeMonkey/chief) - a dedicated tool for autonomous multi-iteration agent workflows.
 
 ## TUI Features
 

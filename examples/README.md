@@ -27,7 +27,20 @@ Advanced pipeline showcasing:
 ./octos examples/example-artifacts.yaml
 ```
 
-### 3. `go-cli-mvp.yaml` - Go CLI Development
+### 3. `cost-optimization.yaml` - Mixed Agent Models
+Cost-optimized pipeline demonstrating:
+- Default cheap model (Haiku) for simple tasks
+- Expensive model (Sonnet) only for complex steps
+- Strategic model selection per step
+- Maximizing value while minimizing costs
+
+**Use case:** Production pipelines where cost matters
+
+```bash
+./octos examples/cost-optimization.yaml
+```
+
+### 4. `go-cli-mvp.yaml` - Go CLI Development
 Complete Go CLI development pipeline:
 - Reading requirements from `IDEA.md`
 - Knowledge accumulation in `GO_INSIGHTS.md`

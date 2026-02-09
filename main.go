@@ -13,6 +13,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version")
 	resume := flag.Bool("resume", false, "Resume from last checkpoint")
 	clean := flag.Bool("clean", false, "Clean state and start fresh")
+	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = infinite, default in TUI)")
 	flag.Parse()
 
 	if *showVersion {
@@ -22,7 +23,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Fatal("Usage: octos [--tui] [--resume] [--clean] <pipeline.yaml>")
+		log.Fatal("Usage: octos [--tui] [--resume] [--clean] [--loop N] <pipeline.yaml>")
 	}
 
 	pipelineFile := args[0]
@@ -43,16 +44,29 @@ func main() {
 	if *useTUI {
 		// TUI mode
 		m := NewTUIModel(pipeline, *resume)
+		m.maxLoops = *loop
 		p := tea.NewProgram(&m, tea.WithAltScreen())
 		m.program = p
 		if _, err := p.Run(); err != nil {
 			log.Fatal(err)
 		}
 	} else {
-		// CLI mode
-		if err := RunPipelineWithResume(pipeline, *resume); err != nil {
-			log.Fatal(err)
+		// Headless mode - loop must be finite (default to 1 if 0)
+		loopCount := *loop
+		if loopCount == 0 {
+			loopCount = 1
 		}
+		
+		for i := 1; i <= loopCount; i++ {
+			if loopCount > 1 {
+				fmt.Printf("\n→ Loop iteration %d/%d\n", i, loopCount)
+			}
+			
+			if err := RunPipelineWithResume(pipeline, *resume && i == 1); err != nil {
+				log.Fatal(err)
+			}
+		}
+		
 		fmt.Println("✓ Pipeline completed")
 	}
 }

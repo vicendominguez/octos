@@ -14,6 +14,40 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// UI Layout Constants
+const (
+	defaultProgressWidth = 40
+	tickInterval         = 100 * time.Millisecond
+	uiFixedLines         = 14
+	minContentHeight     = 10
+	panelBorderOverhead  = 8
+	minRightPanelWidth   = 30
+	titleBorderPadding   = 4
+	widthMargin          = 4
+	
+	// Popup dimensions
+	popupWidthRatio     = 3.0 / 4.0  // 75% of screen width
+	popupHeightRatio    = 2.0 / 3.0  // 66% of screen height
+	popupTextPadding    = 10         // Padding for text wrapping
+	popupViewportOffset = 8          // Offset for viewport height
+	
+	// Responsive breakpoints
+	wideTerminalWidth      = 140
+	extraWideTerminalWidth = 120
+	mediumTerminalWidth    = 100
+	narrowTerminalWidth    = 80
+	compactTitleWidth      = 100
+	minimalTitleWidth      = 80
+	
+	// Progress bar sizing
+	progressWidthDivisor = 3
+	minProgressWidth     = 20
+	maxProgressWidth     = 60
+	
+	// Layout spacing
+	contentVerticalPadding = 6
+)
+
 type StepStatus int
 
 const (
@@ -33,6 +67,13 @@ type StepState struct {
 	Prompt    string
 }
 
+type FocusedPanel int
+
+const (
+	FocusOutput FocusedPanel = iota
+	FocusDiff
+)
+
 type TUIModel struct {
 	pipeline       *Pipeline
 	steps          []StepState
@@ -41,6 +82,7 @@ type TUIModel struct {
 	stepsView      viewport.Model
 	outputView     viewport.Model
 	diffView       viewport.Model
+	promptView     viewport.Model
 	progress       progress.Model
 	width          int
 	height         int
@@ -56,6 +98,9 @@ type TUIModel struct {
 	gitBranch      string
 	userScrolling  bool
 	showPrompt     bool
+	focusedPanel   FocusedPanel
+	maxLoops       int
+	currentLoop    int
 }
 
 type stepStartMsg struct {
@@ -82,60 +127,6 @@ type fileChangesMsg struct {
 type tickMsg time.Time
 type startPipelineMsg struct{}
 
-var (
-	// Cyberpunk color scheme
-	neonCyan    = lipgloss.Color("51")  // Bright cyan
-	neonMagenta = lipgloss.Color("201") // Bright magenta
-	neonGreen   = lipgloss.Color("46")  // Bright green
-	neonYellow  = lipgloss.Color("226") // Bright yellow
-	neonRed     = lipgloss.Color("196") // Bright red
-	darkBg      = lipgloss.Color("235") // Dark background
-	darkerBg    = lipgloss.Color("233") // Darker background
-
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(neonCyan).
-			Background(darkerBg).
-			Padding(0, 1).
-			MarginBottom(1)
-
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(neonCyan).
-			Background(darkBg).
-			Padding(0, 1).
-			Bold(true)
-
-	progressBarStyle = lipgloss.NewStyle().
-				Foreground(neonMagenta).
-				Bold(true)
-
-	stepPendingStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240")).
-				Faint(true)
-
-	stepRunningStyle = lipgloss.NewStyle().
-				Foreground(neonYellow).
-				Bold(true).
-				Blink(true)
-
-	stepCompletedStyle = lipgloss.NewStyle().
-				Foreground(neonGreen).
-				Bold(true)
-
-	stepFailedStyle = lipgloss.NewStyle().
-			Foreground(neonRed).
-			Bold(true)
-
-	panelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(neonCyan).
-			Padding(0, 1)
-
-	statsStyle = lipgloss.NewStyle().
-			Foreground(neonMagenta).
-			Italic(true)
-)
-
 func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 	steps := make([]StepState, len(p.Steps))
 	for i, step := range p.Steps {
@@ -156,7 +147,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 
 	prog := progress.New(
 		progress.WithDefaultGradient(),
-		progress.WithWidth(40),
+		progress.WithWidth(defaultProgressWidth),
 	)
 
 	// Get working directory
@@ -170,25 +161,27 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 	}
 
 	return TUIModel{
-		pipeline:   p,
-		steps:      steps,
-		progress:   prog,
-		startTime:  time.Now(),
-		resuming:   resume,
-		workingDir: workingDir,
-		gitBranch:  gitBranch,
+		pipeline:    p,
+		steps:       steps,
+		progress:    prog,
+		startTime:   time.Now(),
+		resuming:    resume,
+		workingDir:  workingDir,
+		gitBranch:   gitBranch,
+		maxLoops:    0,
+		currentLoop: 1,
 	}
 }
 
 func (m *TUIModel) Init() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
-		tea.EnableMouseAllMotion,
+		tea.EnableMouseCellMotion,
 	)
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Millisecond*100, func(t time.Time) tea.Msg {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -199,34 +192,50 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// Calculate panel dimensions with margins
-		contentWidth := m.width - 4
-		contentHeight := m.height - 4
+		contentWidth := m.width
+		contentHeight := m.height
 		
-		// Steps panel takes 30% of width, rest for output/diff
-		stepsWidth := 30
-		if contentWidth < 100 {
-			stepsWidth = contentWidth / 3
+		// Update progress bar width responsively
+		progressWidth := contentWidth / progressWidthDivisor
+		if progressWidth < minProgressWidth {
+			progressWidth = minProgressWidth
 		}
+		if progressWidth > maxProgressWidth {
+			progressWidth = maxProgressWidth
+		}
+		m.progress.Width = progressWidth
 		
+		stepsWidth := m.calculateStepsWidth(contentWidth)
 		panelWidth := contentWidth - stepsWidth - 2
-		panelHeight := (contentHeight - 16) / 2
 		
-		if panelHeight < 5 {
-			panelHeight = 5
+		availableHeight := contentHeight - uiFixedLines
+		if availableHeight < minContentHeight {
+			availableHeight = minContentHeight
+		}
+		outputHeight := (availableHeight * OutputPanelPct) / 100
+		diffHeight := (availableHeight * DiffPanelPct) / 100
+		
+		if outputHeight < MinPanelHeight {
+			outputHeight = MinPanelHeight
+		}
+		if diffHeight < MinPanelHeight {
+			diffHeight = MinPanelHeight
 		}
 
-		stepsHeight := contentHeight - 16
-		if stepsHeight < 10 {
-			stepsHeight = 10
+		stepsHeight := availableHeight
+		if stepsHeight < MinStepsHeight {
+			stepsHeight = MinStepsHeight
 		}
 
-		m.stepsView = viewport.New(stepsWidth-4, stepsHeight-3)
-		m.outputView = viewport.New(panelWidth-4, panelHeight)
-		m.diffView = viewport.New(panelWidth-4, panelHeight)
+		m.stepsView = viewport.New(stepsWidth-PanelBorderPadding, stepsHeight-3)
+		m.outputView = viewport.New(panelWidth-PanelBorderPadding, outputHeight)
+		m.diffView = viewport.New(panelWidth-PanelBorderPadding, diffHeight)
 		
-		// Trigger pipeline start
-		return m, func() tea.Msg { return startPipelineMsg{} }
+		// Only trigger pipeline start on first window size event
+		if m.currentStep == 0 && !m.pipelineEnded {
+			return m, func() tea.Msg { return startPipelineMsg{} }
+		}
+		return m, nil
 
 	case startPipelineMsg:
 		// Start pipeline after window is ready
@@ -240,70 +249,24 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.MouseWheelUp:
 			m.userScrolling = true
-			m.stepsView.LineUp(3)
-			m.outputView.LineUp(3)
-			m.diffView.LineUp(3)
+			if m.focusedPanel == FocusOutput {
+				m.outputView.LineUp(ScrollLines)
+			} else {
+				m.diffView.LineUp(ScrollLines)
+			}
 			return m, nil
 		case tea.MouseWheelDown:
 			m.userScrolling = true
-			m.stepsView.LineDown(3)
-			m.outputView.LineDown(3)
-			m.diffView.LineDown(3)
+			if m.focusedPanel == FocusOutput {
+				m.outputView.LineDown(ScrollLines)
+			} else {
+				m.diffView.LineDown(ScrollLines)
+			}
 			return m, nil
 		}
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-		
-		case "esc":
-			if m.showPrompt {
-				m.showPrompt = false
-			}
-			return m, nil
-		
-		case "enter":
-			if m.pipelineEnded {
-				m.showPrompt = !m.showPrompt
-			}
-			return m, nil
-		
-		case "j", "down":
-			if m.pipelineEnded && m.selectedStep < len(m.steps)-1 {
-				m.selectedStep++
-				m.scrollToStep(m.selectedStep)
-			}
-			return m, nil
-		
-		case "k", "up":
-			if m.pipelineEnded && m.selectedStep > 0 {
-				m.selectedStep--
-				m.scrollToStep(m.selectedStep)
-			}
-			return m, nil
-		
-		case "ctrl+j":
-			m.userScrolling = true
-			m.outputView.LineDown(1)
-			return m, nil
-		
-		case "ctrl+k":
-			m.userScrolling = true
-			m.outputView.LineUp(1)
-			return m, nil
-		
-		case "ctrl+d":
-			m.userScrolling = true
-			m.outputView.HalfViewDown()
-			return m, nil
-		
-		case "ctrl+u":
-			m.userScrolling = true
-			m.outputView.HalfViewUp()
-			return m, nil
-		}
+		return m.handleKeyPress(msg)
 
 	case tickMsg:
 		if !m.quitting {
@@ -312,44 +275,37 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case stepStartMsg:
-		if msg.index < len(m.steps) {
+		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Status = StatusRunning
 			m.steps[msg.index].StartTime = time.Now()
 			m.steps[msg.index].Prompt = msg.prompt
 			m.currentStep = msg.index
 			m.statusMsg = fmt.Sprintf("Running step %d/%d: %s", msg.index+1, len(m.steps), m.steps[msg.index].Name)
 			m.scrollToStep(msg.index)
-			m.userScrolling = false // Reset on new step
+			m.userScrolling = false
 		}
 		return m, nil
 
 	case stepOutputMsg:
-		if msg.index < len(m.steps) {
+		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Output = msg.output
-			if msg.index == m.currentStep {
-				m.outputView.SetContent(msg.output)
-				m.outputView.GotoBottom()
-			}
 		}
 		return m, nil
 
 	case stepStreamMsg:
-		if msg.index < len(m.steps) {
+		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Output += msg.line + "\n"
-			if msg.index == m.currentStep {
-				m.outputView.SetContent(m.steps[msg.index].Output)
-			}
 		}
 		return m, nil
 
 	case fileChangesMsg:
-		if msg.index < len(m.steps) {
+		if m.isValidStepIndex(msg.index) {
 			m.filesChanged = append(m.filesChanged, msg.changes...)
 		}
 		return m, nil
 
 	case stepCompleteMsg:
-		if msg.index < len(m.steps) {
+		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Duration = msg.duration
 			if msg.err != nil {
 				m.steps[msg.index].Status = StatusFailed
@@ -376,65 +332,100 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *TUIModel) View() string {
-	if m.width == 0 || m.height == 0 {
-		return "Initializing..."
+func (m *TUIModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	
+	case "tab":
+		m.toggleFocusedPanel()
+		return m, nil
+	
+	case "esc":
+		if m.showPrompt {
+			m.showPrompt = false
+		}
+		return m, nil
+	
+	case "enter":
+		return m.handleEnterKey()
+	
+	case "r":
+		return m.handleRestartKey()
+	
+	case "j", "down":
+		return m.handleDownKey()
+	
+	case "k", "up":
+		return m.handleUpKey()
+	
+	case "ctrl+j":
+		m.scrollPanelLines(1)
+		return m, nil
+	
+	case "ctrl+k":
+		m.scrollPanelLines(-1)
+		return m, nil
+	
+	case "ctrl+d":
+		m.scrollPanelHalfPage(true)
+		return m, nil
+	
+	case "ctrl+u":
+		m.scrollPanelHalfPage(false)
+		return m, nil
 	}
+	
+	return m, nil
+}
 
-	// Add margins
-	contentWidth := m.width - 4
-	contentHeight := m.height - 4
-
-	// Title with ASCII art style
-	titleText := "OCTOS PIPELINE ORCHESTRATOR"
-	titleBorder := strings.Repeat("═", len(titleText)+4)
-	title := titleStyle.Render(fmt.Sprintf("╔%s╗\n║  %s  ║\n╚%s╝", titleBorder, titleText, titleBorder))
-
-	// Count completed steps
+func (m *TUIModel) countCompletedSteps() int {
 	completed := 0
 	for _, step := range m.steps {
 		if step.Status == StatusCompleted {
 			completed++
 		}
 	}
+	return completed
+}
 
-	// Progress bar with gradient effect
-	percent := float64(completed) / float64(len(m.steps))
-	progressBar := m.progress.ViewAs(percent)
-	progressText := fmt.Sprintf("▓▒░ %d/%d (%.0f%%) ░▒▓", completed, len(m.steps), percent*100)
-	progressLine := progressBarStyle.Render(progressBar) + " " + lipgloss.NewStyle().Foreground(neonCyan).Bold(true).Render(progressText)
-
-	// Calculate responsive dimensions early
-	stepsWidth := 30
-	if contentWidth < 100 {
-		stepsWidth = contentWidth / 3
+func (m *TUIModel) calculateStepsPerMinute(completed int, elapsed time.Duration) float64 {
+	if elapsed.Minutes() > 0 && completed > 0 {
+		return float64(completed) / elapsed.Minutes()
 	}
-	panelWidth := contentWidth - stepsWidth - 2
+	return 0.0
+}
 
-	// Steps list with cyberpunk style
+func (m *TUIModel) formatLoopInfo() string {
+	if m.maxLoops > 0 {
+		return fmt.Sprintf(" [Loop %d/%d]", m.currentLoop, m.maxLoops)
+	}
+	return fmt.Sprintf(" [Loop %d]", m.currentLoop)
+}
+
+func (m *TUIModel) buildStepsView(showTitle bool, showDuration bool) string {
 	var stepsView strings.Builder
-	stepsView.WriteString(lipgloss.NewStyle().Foreground(neonCyan).Bold(true).Render("PIPELINE STEPS"))
-	stepsView.WriteString("\n\n")
+	
+	if showTitle {
+		stepsView.WriteString(magentaBoldStyle.Render("PIPELINE STEPS"))
+		stepsView.WriteString("\n\n")
+	}
+	
 	for i, step := range m.steps {
-		var icon, style string
-		switch step.Status {
-		case StatusPending:
-			icon = "○"
-			style = stepPendingStyle.Render(fmt.Sprintf("%s %s", icon, step.Name))
-		case StatusRunning:
-			icon = "⚙"
-			style = stepRunningStyle.Render(fmt.Sprintf("%s %s", icon, step.Name))
-		case StatusCompleted:
-			icon = "✓"
-			duration := fmt.Sprintf("%.1fs", step.Duration.Seconds())
-			style = stepCompletedStyle.Render(fmt.Sprintf("%s %s", icon, step.Name)) + " " + statsStyle.Render(duration)
-		case StatusFailed:
-			icon = "✗"
-			style = stepFailedStyle.Render(fmt.Sprintf("%s %s", icon, step.Name))
-		}
-		stepsView.WriteString(style)
+		icon := GetStepIcon(step.Status)
+		stepStyle := GetStepStatusStyle(step.Status)
 		
-		// Show indicator for current running step or selected step
+		line := fmt.Sprintf("%s %s", icon, step.Name)
+		if showDuration && step.Status == StatusCompleted {
+			duration := fmt.Sprintf("%.1fs", step.Duration.Seconds())
+			line = stepStyle.Render(line) + " " + statsStyle.Render(duration)
+		} else {
+			line = stepStyle.Render(line)
+		}
+		
+		stepsView.WriteString(line)
+		
 		if !m.pipelineEnded && i == m.currentStep && step.Status == StatusRunning {
 			stepsView.WriteString(" ◀")
 		} else if m.pipelineEnded && i == m.selectedStep {
@@ -442,18 +433,297 @@ func (m *TUIModel) View() string {
 		}
 		stepsView.WriteString("\n")
 	}
+	
+	return stepsView.String()
+}
 
-	m.stepsView.SetContent(stepsView.String())
+func (m *TUIModel) isValidStepIndex(index int) bool {
+	return index >= 0 && index < len(m.steps)
+}
+
+func (m *TUIModel) getDisplayStep() int {
+	if m.pipelineEnded {
+		return m.selectedStep
+	}
+	return m.currentStep
+}
+
+func (m *TUIModel) toggleFocusedPanel() {
+	if m.focusedPanel == FocusOutput {
+		m.focusedPanel = FocusDiff
+	} else {
+		m.focusedPanel = FocusOutput
+	}
+}
+
+func (m *TUIModel) handleEnterKey() (tea.Model, tea.Cmd) {
+	if m.pipelineEnded {
+		if !m.showPrompt {
+			m.showPrompt = true
+			m.initPromptView()
+		} else {
+			m.showPrompt = false
+		}
+	}
+	return m, nil
+}
+
+func (m *TUIModel) handleRestartKey() (tea.Model, tea.Cmd) {
+	if m.pipelineEnded {
+		if m.maxLoops > 0 && m.currentLoop >= m.maxLoops {
+			m.statusMsg = fmt.Sprintf("Max loops reached (%d/%d)", m.currentLoop, m.maxLoops)
+			return m, nil
+		}
+		return m.restartPipeline()
+	}
+	return m, nil
+}
+
+func (m *TUIModel) handleDownKey() (tea.Model, tea.Cmd) {
+	if m.showPrompt {
+		m.promptView.LineDown(1)
+		return m, nil
+	}
+	if m.pipelineEnded && m.selectedStep < len(m.steps)-1 {
+		m.selectedStep++
+		m.scrollToStep(m.selectedStep)
+	}
+	return m, nil
+}
+
+func (m *TUIModel) handleUpKey() (tea.Model, tea.Cmd) {
+	if m.showPrompt {
+		m.promptView.LineUp(1)
+		return m, nil
+	}
+	if m.pipelineEnded && m.selectedStep > 0 {
+		m.selectedStep--
+		m.scrollToStep(m.selectedStep)
+	}
+	return m, nil
+}
+
+func (m *TUIModel) scrollPanelLines(lines int) {
+	m.userScrolling = true
+	
+	if m.focusedPanel == FocusOutput {
+		if lines > 0 {
+			m.outputView.LineDown(lines)
+		} else {
+			m.outputView.LineUp(-lines)
+		}
+	} else {
+		if lines > 0 {
+			m.diffView.LineDown(lines)
+		} else {
+			m.diffView.LineUp(-lines)
+		}
+	}
+}
+
+func (m *TUIModel) scrollPanelHalfPage(down bool) {
+	m.userScrolling = true
+	
+	if m.focusedPanel == FocusOutput {
+		if down {
+			m.outputView.HalfViewDown()
+		} else {
+			m.outputView.HalfViewUp()
+		}
+	} else {
+		if down {
+			m.diffView.HalfViewDown()
+		} else {
+			m.diffView.HalfViewUp()
+		}
+	}
+}
+
+func (m *TUIModel) View() string {
+	if m.width == 0 || m.height == 0 {
+		return "Initializing..."
+	}
+
+	// Use stacked layout for narrow terminals
+	if m.isNarrowMode() {
+		return m.renderNarrowView()
+	}
+
+	// Render header (fixed height)
+	header := m.renderHeader()
+	
+	// Render footer (fixed height)
+	footer := m.renderFooter()
+	
+	// Calculate content area height based on ACTUAL rendered header/footer heights
+	headerLines := strings.Count(header, "\n") + 1
+	footerLines := strings.Count(footer, "\n") + 1
+	
+	contentHeight := m.height - headerLines - footerLines - contentVerticalPadding
+	if contentHeight < 5 {
+		contentHeight = 5
+	}
+	
+	// Render content panels
+	content := m.renderContent(m.width, contentHeight)
+	
+	// Stack header, content, footer
+	result := lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+	
+	// Truncate to fit terminal height exactly
+	lines := strings.Split(result, "\n")
+	if len(lines) > m.height {
+		lines = lines[:m.height]
+		result = strings.Join(lines, "\n")
+	}
+	
+	// Render popup if showing prompt
+	if m.showPrompt && m.pipelineEnded && m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Prompt != "" {
+		result = m.renderPromptPopup(result)
+	}
+	
+	return result
+}
+
+func (m *TUIModel) renderHeader() string {
+	titleText := "OCTOS PIPELINE ORCHESTRATOR"
+	if m.width < compactTitleWidth {
+		titleText = "OCTOS PIPELINE"
+	}
+	if m.width < minimalTitleWidth {
+		titleText = "OCTOS"
+	}
+	
+	titleBorder := strings.Repeat("═", len(titleText)+titleBorderPadding)
+	titleBox := titleStyle.Render(fmt.Sprintf("╔%s╗\n║  %s  ║\n╚%s╝", titleBorder, titleText, titleBorder))
+	
+	running := 0
+	completed := m.countCompletedSteps()
+	// Count current step as running if pipeline hasn't ended
+	if !m.pipelineEnded && m.isValidStepIndex(m.currentStep) {
+		running = 1
+	}
+
+	// Progress bar with cyberpunk style - cyan text (original color)
+	percent := float64(completed+running) / float64(len(m.steps))
+	progressBar := m.progress.ViewAs(percent)
+	progressText := fmt.Sprintf("▓▒░ %d/%d steps (%.0f%%) ░▒▓", completed+running, len(m.steps), percent*100)
+	
+	loopInfo := m.formatLoopInfo()
+	
+	// Build progress line
+	progressTextStyled := boldCyanStyle.Render(progressText)
+	loopInfoStyled := cyanStyle.Render(loopInfo)
+	
+	progressLine := progressBarStyle.Render(progressBar) + " " + progressTextStyled + loopInfoStyled
+	
+	titleBoxWidth := lipgloss.Width(titleBox)
+	progressLineWidth := lipgloss.Width(progressLine)
+	
+	targetWidth := m.width - widthMargin
+	padding := targetWidth - titleBoxWidth - progressLineWidth
+	if padding < 1 {
+		padding = 1
+	}
+	titleLines := strings.Split(titleBox, "\n")
+	if len(titleLines) >= 2 {
+		titleLines[1] = titleLines[1] + strings.Repeat(" ", padding) + progressLine
+		return strings.Join(titleLines, "\n")
+	}
+	
+	return titleBox
+}
+
+func (m *TUIModel) renderFooter() string {
+	// Enhanced status bar with context
+	currentTime := time.Now().Format("15:04")
+	
+	statusParts := []string{
+		cyanStyle.Render("⏰ " + currentTime),
+		yellowStyle.Render("📁 " + m.workingDir),
+	}
+	
+	if m.gitBranch != "" {
+		statusParts = append(statusParts, 
+			greenStyle.Render("🌿 " + m.gitBranch))
+	}
+	
+	if m.statusMsg != "" {
+		statusParts = append(statusParts, m.statusMsg)
+	}
+	
+	statusBar := statusBarStyle.Width(m.width).Render(
+		strings.Join(statusParts, " │ "),
+	)
+
+	// Stats
+	elapsed := time.Since(m.startTime)
+	if m.pipelineEnded && !m.endTime.IsZero() {
+		elapsed = m.endTime.Sub(m.startTime)
+	}
+	
+	running := 0
+	completed := m.countCompletedSteps()
+	// Count current step as running if pipeline hasn't ended
+	if !m.pipelineEnded && m.isValidStepIndex(m.currentStep) {
+		running = 1
+	}
+	
+	stats := statsStyle.Render(
+		fmt.Sprintf("⚡ Elapsed: %s │ Steps: %d/%d │ Speed: %.1f steps/min",
+			elapsed.Round(time.Second),
+			completed+running,
+			len(m.steps),
+			m.calculateStepsPerMinute(completed, elapsed),
+		),
+	)
+
+	help := m.buildHelpText()
+	
+	return lipgloss.JoinVertical(lipgloss.Left, statusBar, stats, cyanFaintStyle.Render(help))
+}
+
+func (m *TUIModel) buildHelpText() string {
+	if m.pipelineEnded {
+		if m.width >= wideTerminalWidth {
+			return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [r] Restart │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+		} else if m.width >= mediumTerminalWidth {
+			return "⌨  [↑↓/jk] Navigate │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [q] Quit"
+		} else {
+			return "⌨  [↑↓/jk] Nav │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [q] Quit"
+		}
+	} else {
+		if m.width >= extraWideTerminalWidth {
+			return "⌨  [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+		} else if m.width >= narrowTerminalWidth {
+			return "⌨  [Tab] Panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
+		} else {
+			return "⌨  [Tab] Panel │ [j/k] Scroll │ [q] Quit"
+		}
+	}
+}
+
+func (m *TUIModel) renderContent(width, contentHeight int) string {
+	panelOverhead := panelBorderOverhead
+	availableWidth := width - panelOverhead
+	
+	stepsContentWidth := (availableWidth * StepsWidthPct) / 100
+	if stepsContentWidth < MinStepsWidth {
+		stepsContentWidth = MinStepsWidth
+	}
+	
+	rightPanelContentWidth := availableWidth - stepsContentWidth
+	if rightPanelContentWidth < minRightPanelWidth {
+		rightPanelContentWidth = minRightPanelWidth
+	}
+
+	m.stepsView.SetContent(m.buildStepsView(true, true))
 
 	// Current step output
 	currentStepName := "Waiting..."
 	outputContent := "Pipeline starting..."
 	
-	// Show output from selected step (when pipeline ended) or current running step
-	displayStep := m.currentStep
-	if m.pipelineEnded {
-		displayStep = m.selectedStep
-	}
+	displayStep := m.getDisplayStep()
 	
 	if displayStep < len(m.steps) {
 		currentStepName = m.steps[displayStep].Name
@@ -467,15 +737,36 @@ func (m *TUIModel) View() string {
 		}
 	}
 	
-	m.outputView.SetContent(outputContent)
+	// Wrap output content to viewport width (subtract 2 for safety margin)
+	wrapWidth := m.outputView.Width - 2
+	if wrapWidth < 10 {
+		wrapWidth = 10
+	}
+	wrappedOutput := wrapText(outputContent, wrapWidth)
+	m.outputView.SetContent(wrappedOutput)
 	
 	// Auto-scroll to bottom only if user hasn't manually scrolled and step is running
 	if !m.pipelineEnded && !m.userScrolling && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
 		m.outputView.GotoBottom()
 	}
 	
-	outputPanel := panelStyle.Width(panelWidth).Render(
-		lipgloss.NewStyle().Foreground(neonCyan).Bold(true).Render(fmt.Sprintf("OUTPUT: %s", currentStepName)) + "\n\n" +
+	// Add focus indicator to panel titles
+	outputTitle := fmt.Sprintf("OUTPUT: %s", currentStepName)
+	if m.focusedPanel == FocusOutput {
+		outputTitle += " ◀"
+	}
+	
+	outputPanelHeight := (contentHeight * OutputPanelPct) / 100
+	diffPanelHeight := contentHeight - outputPanelHeight
+	if outputPanelHeight < MinPanelHeight {
+		outputPanelHeight = MinPanelHeight
+	}
+	if diffPanelHeight < MinPanelHeight {
+		diffPanelHeight = MinPanelHeight
+	}
+	
+	outputPanel := panelStyle.Width(rightPanelContentWidth).Height(outputPanelHeight).Render(
+		magentaBoldStyle.Render(outputTitle) + "\n\n" +
 			m.outputView.View(),
 	)
 
@@ -484,116 +775,217 @@ func (m *TUIModel) View() string {
 	if len(m.filesChanged) > 0 {
 		var dc strings.Builder
 		for _, file := range m.filesChanged {
-			dc.WriteString(lipgloss.NewStyle().Foreground(neonGreen).Render("+ " + file))
+			dc.WriteString(greenStyle.Render("+ " + file))
 			dc.WriteString("\n")
 		}
 		diffContent = dc.String()
 	}
 	m.diffView.SetContent(diffContent)
 	
-	diffPanel := panelStyle.Width(panelWidth).Render(
-		lipgloss.NewStyle().Foreground(neonMagenta).Bold(true).Render("FILE CHANGES") + "\n\n" +
+	// Add focus indicator to diff panel title
+	diffTitle := "FILE CHANGES"
+	if m.focusedPanel == FocusDiff {
+		diffTitle += " ◀"
+	}
+	
+	diffPanel := panelStyle.Width(rightPanelContentWidth).Height(diffPanelHeight).Render(
+		magentaBoldStyle.Render(diffTitle) + "\n\n" +
 			m.diffView.View(),
 	)
 
-	// Stats
-	elapsed := time.Since(m.startTime)
-	if m.pipelineEnded && !m.endTime.IsZero() {
-		elapsed = m.endTime.Sub(m.startTime)
+	rightPanels := lipgloss.JoinVertical(lipgloss.Left, outputPanel, diffPanel)
+	totalRightHeight := lipgloss.Height(rightPanels)
+	
+	// Subtract 2 to account for steps panel's own border (top+bottom)
+	stepsPanel := panelStyle.Width(stepsContentWidth).Height(totalRightHeight - 2).Render(m.stepsView.View())
+
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		stepsPanel,
+		rightPanels,
+	)
+}
+
+// isNarrowMode returns true if terminal is too narrow for side-by-side layout
+func (m *TUIModel) isNarrowMode() bool {
+	return m.width < NarrowModeWidth
+}
+
+// renderNarrowView renders stacked layout for narrow terminals
+func (m *TUIModel) renderNarrowView() string {
+	contentWidth := m.width
+	contentHeight := m.height
+
+	// Title (compact)
+	titleText := "OCTOS"
+	if m.maxLoops != 1 {
+		titleText += fmt.Sprintf(" [%d", m.currentLoop)
+		if m.maxLoops > 0 {
+			titleText += fmt.Sprintf("/%d", m.maxLoops)
+		}
+		titleText += "]"
+	}
+	title := titleStyle.Render(titleText)
+
+	// Progress
+	completed := m.countCompletedSteps()
+	percent := float64(completed) / float64(len(m.steps))
+	progressBar := m.progress.ViewAs(percent)
+	progressText := fmt.Sprintf("%d/%d", completed, len(m.steps))
+	progressLine := progressBarStyle.Render(progressBar) + " " + progressText
+
+	// Calculate available height for panels
+	// Fixed: title(1) + progress(1) + help(1) = 3 lines
+	fixedHeight := 3
+	availableHeight := contentHeight - fixedHeight
+	if availableHeight < 10 {
+		availableHeight = 10
+	}
+
+	// Steps (30% of available height, min 3)
+	stepsHeight := (availableHeight * 30) / 100
+	if stepsHeight < 3 {
+		stepsHeight = 3
 	}
 	
-	// Count running steps as in progress
-	running := 0
-	for _, step := range m.steps {
-		if step.Status == StatusRunning {
-			running = 1
-			break
+	m.stepsView.SetContent(m.buildStepsView(false, false))
+	stepsPanel := panelStyle.Width(contentWidth).Height(stepsHeight).Render(m.stepsView.View())
+
+	// Output (remaining height)
+	outputHeight := availableHeight - stepsHeight
+	if outputHeight < 5 {
+		outputHeight = 5
+	}
+	
+	displayStep := m.getDisplayStep()
+	
+	currentStepName := "Waiting..."
+	outputContent := "Pipeline starting..."
+	if displayStep < len(m.steps) {
+		currentStepName = m.steps[displayStep].Name
+		if m.steps[displayStep].Output != "" {
+			outputContent = m.steps[displayStep].Output
 		}
 	}
+	m.outputView.SetContent(outputContent)
 	
-	stats := statsStyle.Render(
-		fmt.Sprintf("⚡ Elapsed: %s │ Steps: %d/%d │ Speed: %.1f steps/min",
-			elapsed.Round(time.Second),
-			completed+running,
-			len(m.steps),
-			func() float64 {
-				if elapsed.Minutes() > 0 && completed > 0 {
-					return float64(completed) / elapsed.Minutes()
-				}
-				return 0.0
-			}(),
-		),
+	outputTitle := fmt.Sprintf("OUT: %s", currentStepName)
+	if m.focusedPanel == FocusOutput {
+		outputTitle += " ◀"
+	}
+	outputPanel := panelStyle.Width(contentWidth).Height(outputHeight).Render(
+		PanelTitleStyle().Render(outputTitle) + "\n" + m.outputView.View(),
 	)
 
-	// Enhanced status bar with context
-	currentTime := time.Now().Format("15:04")
-	
-	statusParts := []string{
-		lipgloss.NewStyle().Foreground(neonCyan).Render("⏰ " + currentTime),
-		lipgloss.NewStyle().Foreground(neonYellow).Render("📁 " + m.workingDir),
-	}
-	
-	if m.gitBranch != "" {
-		statusParts = append(statusParts, 
-			lipgloss.NewStyle().Foreground(neonGreen).Render("🌿 " + m.gitBranch))
-	}
-	
-	if m.statusMsg != "" {
-		statusParts = append(statusParts, m.statusMsg)
-	}
-	
-	statusBar := statusBarStyle.Width(contentWidth).Render(
-		strings.Join(statusParts, " │ "),
-	)
+	// Help (compact)
+	help := "[Tab] Switch │ [j/k] Scroll │ [q] Quit"
 
-	// Calculate responsive dimensions
-	panelHeight := contentHeight - 16
-	if panelHeight < 10 {
-		panelHeight = 10
-	}
-
-	stepsPanel := panelStyle.Width(stepsWidth).Height(panelHeight).Render(m.stepsView.View())
-
-	// Layout with margins
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
 		title,
 		progressLine,
-		"",
-		lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			stepsPanel,
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				outputPanel,
-				diffPanel,
-			),
-		),
-		"",
-		statusBar,
-		stats,
-		"",
-		lipgloss.NewStyle().Foreground(neonCyan).Faint(true).Render(
-			func() string {
-				if m.pipelineEnded {
-					return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
-				}
-				return "⌨  [Ctrl+j/k] Scroll output │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
-			}(),
-		),
+		stepsPanel,
+		outputPanel,
+		cyanFaintStyle.Render(help),
 	)
 
-	// Render popup if showing prompt
-	if m.showPrompt && m.pipelineEnded && m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Prompt != "" {
-		content = m.renderPromptPopup(content)
-	}
+	return content
+}
 
-	// Add margins
-	return lipgloss.NewStyle().Margin(1, 2).Render(content)
+// calculateStepsWidth returns the width for the steps panel based on terminal width
+func (m *TUIModel) calculateStepsWidth(contentWidth int) int {
+	stepsWidth := (contentWidth * StepsWidthPct) / 100
+	if stepsWidth < MinStepsWidth {
+		stepsWidth = MinStepsWidth
+	}
+	return stepsWidth
+}
+
+// wrapText hard-wraps text to fit within width
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	
+	var result strings.Builder
+	lines := strings.Split(text, "\n")
+	
+	for i, line := range lines {
+		currentWidth := 0
+		for _, r := range line {
+			runeWidth := lipgloss.Width(string(r))
+			if currentWidth+runeWidth > width && currentWidth > 0 {
+				result.WriteString("\n")
+				currentWidth = 0
+			}
+			result.WriteRune(r)
+			currentWidth += runeWidth
+		}
+		if i < len(lines)-1 {
+			result.WriteString("\n")
+		}
+	}
+	
+	return result.String()
+}
+
+// initPromptView initializes the prompt viewport with current step's prompt
+func (m *TUIModel) initPromptView() {
+	if m.selectedStep >= len(m.steps) {
+		return
+	}
+	
+	prompt := m.steps[m.selectedStep].Prompt
+	popupWidth := int(float64(m.width) * popupWidthRatio)
+	if popupWidth > NarrowModeWidth {
+		popupWidth = NarrowModeWidth
+	}
+	popupHeight := int(float64(m.height) * popupHeightRatio)
+	if popupHeight > PopupMaxHeight {
+		popupHeight = PopupMaxHeight
+	}
+	
+	wrappedPrompt := wrapText(prompt, popupWidth-popupTextPadding)
+	m.promptView = viewport.New(popupWidth-popupTextPadding, popupHeight-popupViewportOffset)
+	m.promptView.SetContent(wrappedPrompt)
+}
+
+// restartPipeline resets the pipeline state and starts again
+func (m *TUIModel) restartPipeline() (tea.Model, tea.Cmd) {
+	m.currentLoop++
+	
+	// Reset all steps to pending
+	for i := range m.steps {
+		m.steps[i].Status = StatusPending
+		m.steps[i].Output = ""
+		m.steps[i].Error = nil
+		m.steps[i].Duration = 0
+	}
+	
+	// Reset state
+	m.currentStep = 0
+	m.selectedStep = 0
+	m.pipelineEnded = false
+	m.filesChanged = []string{}
+	m.startTime = time.Now()
+	m.endTime = time.Time{}
+	m.userScrolling = false
+	
+	// Reset progress bar
+	m.progress.SetPercent(0)
+	
+	m.statusMsg = fmt.Sprintf("Restarting pipeline (loop %d", m.currentLoop)
+	if m.maxLoops > 0 {
+		m.statusMsg += fmt.Sprintf("/%d", m.maxLoops)
+	}
+	m.statusMsg += ")..."
+	
+	// Trigger pipeline start
+	return m, func() tea.Msg { return startPipelineMsg{} }
 }
 
 func (m *TUIModel) scrollToStep(stepIndex int) {
-	if stepIndex < 0 || stepIndex >= len(m.steps) {
+	if !m.isValidStepIndex(stepIndex) {
 		return
 	}
 	
@@ -612,17 +1004,15 @@ func (m *TUIModel) scrollToStep(stepIndex int) {
 }
 
 func (m *TUIModel) renderPromptPopup(baseContent string) string {
-	prompt := m.steps[m.selectedStep].Prompt
 	stepName := m.steps[m.selectedStep].Name
 	
-	// Popup dimensions
-	popupWidth := m.width * 3 / 4
-	if popupWidth > 100 {
-		popupWidth = 100
+	popupWidth := int(float64(m.width) * popupWidthRatio)
+	if popupWidth > NarrowModeWidth {
+		popupWidth = NarrowModeWidth
 	}
-	popupHeight := m.height * 2 / 3
-	if popupHeight > 30 {
-		popupHeight = 30
+	popupHeight := int(float64(m.height) * popupHeightRatio)
+	if popupHeight > PopupMaxHeight {
+		popupHeight = PopupMaxHeight
 	}
 	
 	// Create popup style
@@ -635,28 +1025,21 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 		Height(popupHeight)
 	
 	// Title
-	popupTitle := lipgloss.NewStyle().
-		Foreground(neonMagenta).
-		Bold(true).
-		Render(fmt.Sprintf("PROMPT: %s", stepName))
+	popupTitle := magentaBoldStyle.Render(fmt.Sprintf("PROMPT: %s", stepName))
 	
-	// Prompt content with wrapping
-	promptContent := lipgloss.NewStyle().
-		Foreground(neonCyan).
-		Width(popupWidth - 6).
-		Render(prompt)
-	
-	// Footer
+	// Footer with scroll hint
+	scrollPercent := m.promptView.ScrollPercent()
+	scrollInfo := fmt.Sprintf("%.0f%%", scrollPercent*100)
 	footer := lipgloss.NewStyle().
 		Foreground(neonYellow).
 		Faint(true).
-		Render("[Enter/Esc] Close")
+		Render(fmt.Sprintf("[j/k] Scroll │ [Enter/Esc] Close │ %s", scrollInfo))
 	
 	popupContent := lipgloss.JoinVertical(
 		lipgloss.Left,
 		popupTitle,
 		"",
-		promptContent,
+		m.promptView.View(),
 		"",
 		footer,
 	)
@@ -673,16 +1056,6 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 		lipgloss.WithWhitespaceChars(" "),
 		lipgloss.WithWhitespaceForeground(lipgloss.Color("0")),
 	)
-}
-
-
-func (m *TUIModel) updateDiffView() {
-	var content strings.Builder
-	for _, file := range m.filesChanged {
-		content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("+ " + file))
-		content.WriteString("\n")
-	}
-	m.diffView.SetContent(content.String())
 }
 
 func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program) {

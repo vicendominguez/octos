@@ -317,10 +317,15 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if msg.index == len(m.steps)-1 {
-				// Pipeline ended, enable navigation
+				// Pipeline ended
 				m.pipelineEnded = true
 				m.endTime = time.Now()
 				m.selectedStep = msg.index
+
+				// Auto-restart if loop mode is active and loops remaining
+				if m.maxLoops == 0 || m.currentLoop < m.maxLoops {
+					return m.restartPipeline()
+				}
 				m.statusMsg = "Pipeline completed! Use ↑↓/jk to navigate steps"
 			}
 		}

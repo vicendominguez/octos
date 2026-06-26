@@ -121,8 +121,11 @@ steps:
       2. Write/update tests
       3. Run tests to verify
       4. Make small, focused commits with descriptive messages
-      5. Push the branch:
-         git push -u origin fix/issue-{number}
+      5. Rebase on latest main before pushing:
+         git fetch origin main && git rebase origin/main
+         If rebase conflicts arise, resolve them and run tests again.
+      6. Push the branch:
+         git push -u origin fix/issue-{number} --force-with-lease
 
       If a dependency update is needed, update dependency files and commit separately.
 

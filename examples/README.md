@@ -58,6 +58,19 @@ Complete Go CLI development pipeline:
 ./octos examples/go-cli-mvp.yaml
 ```
 
+### 5. `code-review-to-gitea-issues.yaml` - Automated Code Review → Gitea Issues
+Multi-repo code review pipeline that:
+- Clones multiple repos from Gitea
+- Analyzes code for updates, improvements, best practices, and concerns
+- Creates labeled issues in Gitea automatically
+- Follows KISS/YAGNI principles
+
+**Use case:** Automated tech debt detection and issue tracking
+
+```bash
+./octos examples/code-review-to-gitea-issues.yaml
+```
+
 ## Running Examples
 
 ```bash

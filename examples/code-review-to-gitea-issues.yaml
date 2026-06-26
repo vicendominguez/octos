@@ -1,0 +1,117 @@
+# Automated code review pipeline that analyzes multiple repos
+# and creates Gitea issues for findings (updates, improvements, concerns).
+#
+# Usage:
+#   1. Replace YOUR_GITEA_TOKEN, YOUR_GITEA_URL, and repo names
+#   2. Run: octos code-review-to-gitea-issues.yaml
+#
+# Labels created automatically: update, improvement, best-practice, concern
+
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools"]
+
+context:
+  role: "Senior software engineer doing code review and prospection"
+  gitea_url: "YOUR_GITEA_URL"
+  gitea_owner: "YOUR_USER"
+  repos:
+    - project-alpha
+    - project-beta
+    - project-gamma
+  labels:
+    - "update"
+    - "improvement"
+    - "best-practice"
+    - "concern"
+  principles:
+    - "KISS: Keep It Simple Stupid"
+    - "YAGNI: You Ain't Gonna Need It"
+    - "Only suggest actionable, concrete changes"
+    - "Each issue must be a single, specific finding"
+    - "Do not suggest over-engineering or unnecessary abstractions"
+
+steps:
+  - name: clone-repos
+    prompt: |
+      Clone these repos from Gitea into /tmp/octos-review/ (remove that dir first if exists):
+
+      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-alpha.git /tmp/octos-review/project-alpha
+      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-beta.git /tmp/octos-review/project-beta
+      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-gamma.git /tmp/octos-review/project-gamma
+
+      After cloning, list the file tree of each repo (no .git dirs). Output the tree for each.
+
+  - name: analyze-repos
+    prompt: |
+      Analyze each repo in /tmp/octos-review/. For each repo, read all source files and check:
+
+      1. **Updates**: outdated dependencies (go.mod, requirements.txt, package.json), old Go/Python versions
+      2. **Improvements**: code that could be simpler following KISS/YAGNI principles
+      3. **Best practices**: missing error handling, no tests, hardcoded values, missing docs, security issues
+      4. **Concerns**: architectural problems, potential bugs, race conditions
+
+      Principles to follow:
+      {{context.principles}}
+
+      Output a JSON array with this structure (one entry per finding):
+      ```json
+      [
+        {
+          "repo": "repo-name",
+          "label": "update|improvement|best-practice|concern",
+          "title": "Short descriptive title",
+          "body": "Detailed description with file references and suggested fix"
+        }
+      ]
+      ```
+
+      Be specific. Reference actual files and line numbers. Only report real, actionable findings.
+    save_to: findings.json
+
+  - name: setup-labels
+    prompt: |
+      Create these labels in each of these Gitea repos if they don't exist already.
+      Use curl with token authentication.
+
+      Repos: project-alpha, project-beta, project-gamma
+      Labels to create (with colors):
+      - "update" color "#0075ca"
+      - "improvement" color "#a2eeef"
+      - "best-practice" color "#7057ff"
+      - "concern" color "#d73a4a"
+
+      API: YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/labels
+      Token: YOUR_GITEA_TOKEN
+
+      For each repo, first GET existing labels, then POST only missing ones.
+      Use: -H "Authorization: token YOUR_GITEA_TOKEN"
+
+  - name: create-issues
+    load_from: findings.json
+    prompt: |
+      Using the findings from the analysis:
+      {{artifact.findings}}
+
+      Create one Gitea issue per finding using the API.
+
+      API endpoint: POST YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/issues
+      Auth header: "Authorization: token YOUR_GITEA_TOKEN"
+
+      For each finding:
+      1. First, GET the label ID: GET YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/labels and find the ID for the matching label name
+      2. Then POST the issue with:
+         ```json
+         {
+           "title": "{finding.title}",
+           "body": "{finding.body}",
+           "labels": [label_id]
+         }
+         ```
+
+      Create ALL issues. Report how many were created per repo.
+
+  - name: cleanup
+    prompt: |
+      Remove /tmp/octos-review/ directory.
+      Then output a final summary: how many issues were created per repo and per label type.

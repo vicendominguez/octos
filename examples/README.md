@@ -53,6 +53,20 @@ Multi-repo code review pipeline that:
 ./octos examples/code-review-to-gitea-issues.yaml
 ```
 
+### 5. `gitea-issue-to-mr.yaml` - Automated Issue → Merge Request
+Full issue resolution pipeline with ralph loop support:
+- Picks oldest open issue (or resumes in-progress)
+- Reads issue + all comments for context
+- Analyzes, plans, implements, validates
+- Creates merge request on success
+- Labels as state machine: (none) → in-progress → in-review
+
+**Use case:** Autonomous issue resolution with `octos --loop 0`
+
+```bash
+GITEA_URL=http://your-gitea:3000 GITEA_TOKEN=xxx octos examples/gitea-issue-to-mr.yaml
+```
+
 ## Running Examples
 
 ```bash

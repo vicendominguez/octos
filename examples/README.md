@@ -40,25 +40,7 @@ Cost-optimized pipeline demonstrating:
 ./octos examples/cost-optimization.yaml
 ```
 
-### 4. `go-cli-mvp.yaml` - Go CLI Development
-Complete Go CLI development pipeline:
-- Reading requirements from `IDEA.md`
-- Knowledge accumulation in `GO_INSIGHTS.md`
-- Conditional logic based on existing insights
-- Full cycle: requirements → planning → implementation → testing
-- Artifact-based workflow to manage context size
-
-**Use case:** Building Go CLI applications with iterative learning
-
-**Prerequisites:**
-- Create `IDEA.md` with your CLI requirements
-- Optionally create `GO_INSIGHTS.md` for accumulated knowledge
-
-```bash
-./octos examples/go-cli-mvp.yaml
-```
-
-### 5. `code-review-to-gitea-issues.yaml` - Automated Code Review → Gitea Issues
+### 4. `code-review-to-gitea-issues.yaml` - Automated Code Review → Gitea Issues
 Multi-repo code review pipeline that:
 - Clones multiple repos from Gitea
 - Analyzes code for updates, improvements, best practices, and concerns
@@ -78,7 +60,7 @@ Multi-repo code review pipeline that:
 ./octos examples/example.yaml
 
 # Headless mode (CI/CD)
-./octos --tui=false examples/example.yaml
+./octos -no-tui examples/example.yaml
 
 # Resume from checkpoint
 ./octos --resume examples/example.yaml

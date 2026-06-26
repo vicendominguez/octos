@@ -18,8 +18,8 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.5.1/octos_0.5.1_amd64.deb
-sudo dpkg -i octos_0.5.1_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v0.6.0/octos_0.6.0_amd64.deb
+sudo dpkg -i octos_0.6.0_amd64.deb
 ```
 
 ### From source
@@ -226,6 +226,18 @@ Access data from previous steps and context:
 {{context.rules}}             # Lists from context
 {{artifact.filename}}         # Loaded artifact content
 ```
+
+### 🌐 Environment Variables
+
+Use `${VAR}` or `$VAR` in your YAML to reference environment variables:
+
+```yaml
+context:
+  api_token: "${MY_SECRET_TOKEN}"
+  base_url: "${API_URL}"
+```
+
+This keeps secrets out of pipeline files. Variables are expanded before YAML parsing.
 
 ### 💾 Artifacts
 

@@ -2,8 +2,9 @@
 # and creates Gitea issues for findings (updates, improvements, concerns).
 #
 # Usage:
-#   1. Replace YOUR_GITEA_TOKEN, YOUR_GITEA_URL, and repo names
-#   2. Run: octos code-review-to-gitea-issues.yaml
+#   1. Export env vars: GITEA_TOKEN, GITEA_URL, GITEA_OWNER
+#   2. Replace repo names with your own
+#   3. Run: octos code-review-to-gitea-issues.yaml
 #
 # Labels created automatically: update, improvement, best-practice, concern
 
@@ -13,8 +14,9 @@ agent:
 
 context:
   role: "Senior software engineer doing code review and prospection"
-  gitea_url: "YOUR_GITEA_URL"
-  gitea_owner: "YOUR_USER"
+  gitea_url: "${GITEA_URL}"
+  gitea_token: "${GITEA_TOKEN}"
+  gitea_owner: "${GITEA_OWNER}"
   repos:
     - project-alpha
     - project-beta
@@ -36,9 +38,9 @@ steps:
     prompt: |
       Clone these repos from Gitea into /tmp/octos-review/ (remove that dir first if exists):
 
-      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-alpha.git /tmp/octos-review/project-alpha
-      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-beta.git /tmp/octos-review/project-beta
-      git clone --depth 1 YOUR_GITEA_URL/YOUR_USER/project-gamma.git /tmp/octos-review/project-gamma
+      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-alpha.git /tmp/octos-review/project-alpha
+      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-beta.git /tmp/octos-review/project-beta
+      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-gamma.git /tmp/octos-review/project-gamma
 
       After cloning, list the file tree of each repo (no .git dirs). Output the tree for each.
 
@@ -81,11 +83,11 @@ steps:
       - "best-practice" color "#7057ff"
       - "concern" color "#d73a4a"
 
-      API: YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/labels
-      Token: YOUR_GITEA_TOKEN
+      API: {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
+      Token: {{context.gitea_token}}
 
       For each repo, first GET existing labels, then POST only missing ones.
-      Use: -H "Authorization: token YOUR_GITEA_TOKEN"
+      Use: -H "Authorization: token {{context.gitea_token}}"
 
   - name: create-issues
     load_from: findings.json
@@ -95,11 +97,11 @@ steps:
 
       Create one Gitea issue per finding using the API.
 
-      API endpoint: POST YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/issues
-      Auth header: "Authorization: token YOUR_GITEA_TOKEN"
+      API endpoint: POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues
+      Auth header: "Authorization: token {{context.gitea_token}}"
 
       For each finding:
-      1. First, GET the label ID: GET YOUR_GITEA_URL/api/v1/repos/YOUR_USER/{repo}/labels and find the ID for the matching label name
+      1. First, GET the label ID: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels and find the ID for the matching label name
       2. Then POST the issue with:
          ```json
          {

@@ -35,8 +35,11 @@ func LoadPipeline(path string) (*Pipeline, error) {
 		return nil, err
 	}
 
+	// Expand environment variables (${VAR} or $VAR) in YAML content
+	expanded := os.ExpandEnv(string(data))
+
 	var p Pipeline
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &p); err != nil {
 		return nil, err
 	}
 

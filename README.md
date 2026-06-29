@@ -18,8 +18,8 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.6.1/octos_0.6.1_amd64.deb
-sudo dpkg -i octos_0.6.1_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v0.7.0/octos_0.7.0_amd64.deb
+sudo dpkg -i octos_0.7.0_amd64.deb
 ```
 
 ### From source
@@ -238,6 +238,28 @@ context:
 ```
 
 This keeps secrets out of pipeline files. Variables are expanded before YAML parsing.
+
+### 📄 External Prompt Files
+
+Use `prompt_file` to load prompts from external files instead of inline YAML:
+
+```yaml
+steps:
+  - name: analyze
+    prompt_file: prompts/analyze.md    # relative to YAML location
+    save_to: analysis.txt
+
+  - name: quick-step
+    prompt: "Do something simple"      # inline still works
+```
+
+**Features:**
+- Path is relative to the pipeline YAML file location
+- Environment variables (`${VAR}`) are expanded in file content
+- Context interpolation (`{{context.X}}`) works as usual
+- Mix inline `prompt:` and `prompt_file:` freely across steps
+
+**Use when:** prompts are long (40+ lines) or shared across pipelines.
 
 ### 💾 Artifacts
 

@@ -1,0 +1,29 @@
+# Example: mixing inline prompts with external prompt files.
+# Long/complex prompts live in prompts/ directory as markdown files.
+# Short prompts stay inline for readability.
+#
+# Usage: octos examples/example-prompt-file.yaml
+
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools"]
+
+context:
+  role: "Code reviewer"
+  rules:
+    - "Be concise"
+    - "Focus on actionable items"
+
+steps:
+  - name: analyze
+    prompt_file: prompts/analyze.md
+    save_to: analysis.txt
+
+  - name: summarize
+    load_from: analysis.txt
+    prompt: |
+      Based on this analysis:
+      {{artifact.analysis}}
+
+      Create a one-paragraph executive summary.
+      Keep it under 5 sentences.

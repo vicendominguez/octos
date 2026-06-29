@@ -21,12 +21,13 @@ type AgentConfig struct {
 }
 
 type Step struct {
-	Name     string       `yaml:"name"`
-	Prompt   string       `yaml:"prompt"`
-	SaveTo   string       `yaml:"save_to"`
-	LoadFrom string       `yaml:"load_from"`
-	When     string       `yaml:"when"`
-	Agent    *AgentConfig `yaml:"agent,omitempty"`
+	Name       string       `yaml:"name"`
+	Prompt     string       `yaml:"prompt"`
+	PromptFile string       `yaml:"prompt_file,omitempty"`
+	SaveTo     string       `yaml:"save_to"`
+	LoadFrom   string       `yaml:"load_from"`
+	When       string       `yaml:"when"`
+	Agent      *AgentConfig `yaml:"agent,omitempty"`
 }
 
 func LoadPipeline(path string) (*Pipeline, error) {
@@ -44,6 +45,22 @@ func LoadPipeline(path string) (*Pipeline, error) {
 	}
 
 	p.File = path
+
+	// Resolve prompt_file references
+	pipelineDir := filepath.Dir(path)
+	for i, step := range p.Steps {
+		if step.PromptFile != "" {
+			promptPath := step.PromptFile
+			if !filepath.IsAbs(promptPath) {
+				promptPath = filepath.Join(pipelineDir, promptPath)
+			}
+			content, err := os.ReadFile(promptPath)
+			if err != nil {
+				return nil, fmt.Errorf("step %d (%s): cannot read prompt_file %q: %w", i+1, step.Name, step.PromptFile, err)
+			}
+			p.Steps[i].Prompt = os.ExpandEnv(string(content))
+		}
+	}
 
 	// Validate pipeline
 	if err := p.Validate(); err != nil {
@@ -74,7 +91,7 @@ func (p *Pipeline) Validate() error {
 			return fmt.Errorf("step %d: name is required", i+1)
 		}
 		if step.Prompt == "" {
-			return fmt.Errorf("step %d (%s): prompt is required", i+1, step.Name)
+			return fmt.Errorf("step %d (%s): prompt or prompt_file is required", i+1, step.Name)
 		}
 	}
 	

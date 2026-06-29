@@ -53,7 +53,19 @@ Multi-repo code review pipeline that:
 ./octos examples/code-review-to-gitea-issues.yaml
 ```
 
-### 5. `gitea-issue-to-mr.yaml` - Automated Issue → Merge Request
+### 5. `example-prompt-file.yaml` - External Prompt Files
+Demonstrates mixing inline prompts with external markdown files:
+- Long prompts loaded from `prompts/` directory
+- Short prompts stay inline
+- Environment variables expanded in external files
+
+**Use case:** Complex pipelines with large, reusable prompts
+
+```bash
+./octos examples/example-prompt-file.yaml
+```
+
+### 6. `gitea-issue-to-mr.yaml` - Automated Issue → Merge Request
 Full issue resolution pipeline with ralph loop support:
 - Picks oldest open issue (or resumes in-progress)
 - Reads issue + all comments for context

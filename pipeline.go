@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,14 +31,31 @@ type Step struct {
 	Agent      *AgentConfig `yaml:"agent,omitempty"`
 }
 
+// expandEnvWithDefaults expands ${VAR}, $VAR, and ${VAR:-default} syntax.
+// If VAR is unset or empty and a default is provided via :-, the default is used.
+func expandEnvWithDefaults(s string) string {
+	return os.Expand(s, func(key string) string {
+		// Handle ${VAR:-default} syntax
+		if idx := strings.Index(key, ":-"); idx >= 0 {
+			envKey := key[:idx]
+			defaultVal := key[idx+2:]
+			if val, ok := os.LookupEnv(envKey); ok && val != "" {
+				return val
+			}
+			return defaultVal
+		}
+		return os.Getenv(key)
+	})
+}
+
 func LoadPipeline(path string) (*Pipeline, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	// Expand environment variables (${VAR} or $VAR) in YAML content
-	expanded := os.ExpandEnv(string(data))
+	// Expand environment variables with default value support (${VAR:-default})
+	expanded := expandEnvWithDefaults(string(data))
 
 	var p Pipeline
 	if err := yaml.Unmarshal([]byte(expanded), &p); err != nil {
@@ -58,7 +76,7 @@ func LoadPipeline(path string) (*Pipeline, error) {
 			if err != nil {
 				return nil, fmt.Errorf("step %d (%s): cannot read prompt_file %q: %w", i+1, step.Name, step.PromptFile, err)
 			}
-			p.Steps[i].Prompt = os.ExpandEnv(string(content))
+			p.Steps[i].Prompt = expandEnvWithDefaults(string(content))
 		}
 	}
 

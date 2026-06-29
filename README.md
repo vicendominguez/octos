@@ -18,8 +18,8 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.7.0/octos_0.7.0_amd64.deb
-sudo dpkg -i octos_0.7.0_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v0.7.1/octos_0.7.1_amd64.deb
+sudo dpkg -i octos_0.7.1_amd64.deb
 ```
 
 ### From source
@@ -235,9 +235,10 @@ Use `${VAR}` or `$VAR` in your YAML to reference environment variables:
 context:
   api_token: "${MY_SECRET_TOKEN}"
   base_url: "${API_URL}"
+  repos: "${REPOS:-project-a,project-b}"  # default if unset
 ```
 
-This keeps secrets out of pipeline files. Variables are expanded before YAML parsing.
+Supports `${VAR:-default}` syntax — if the variable is unset or empty, the default value is used. This keeps secrets out of pipeline files. Variables are expanded before YAML parsing.
 
 ### 📄 External Prompt Files
 

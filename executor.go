@@ -321,12 +321,19 @@ func interpolate(text string, ctx *Context) string {
 		result = strings.ReplaceAll(result, placeholder, output)
 	}
 
-	if rules, ok := ctx.Global["rules"].([]any); ok {
-		var rulesList []string
-		for _, r := range rules {
-			rulesList = append(rulesList, fmt.Sprintf("- %v", r))
+	// Interpolate all context values
+	for key, value := range ctx.Global {
+		placeholder := fmt.Sprintf("{{context.%s}}", key)
+		switch v := value.(type) {
+		case []any:
+			var lines []string
+			for _, item := range v {
+				lines = append(lines, fmt.Sprintf("- %v", item))
+			}
+			result = strings.ReplaceAll(result, placeholder, strings.Join(lines, "\n"))
+		default:
+			result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", v))
 		}
-		result = strings.ReplaceAll(result, "{{context.rules}}", strings.Join(rulesList, "\n"))
 	}
 
 	return result

@@ -13,7 +13,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version")
 	resume := flag.Bool("resume", false, "Resume from last checkpoint")
 	clean := flag.Bool("clean", false, "Clean state and start fresh")
-	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = infinite, default in TUI)")
+	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = no loop, N = repeat N times)")
 	flag.Parse()
 
 	if *showVersion {

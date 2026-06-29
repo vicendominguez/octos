@@ -323,7 +323,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedStep = msg.index
 
 				// Auto-restart if loop mode is active and loops remaining
-				if m.maxLoops == 0 || m.currentLoop < m.maxLoops {
+				if m.maxLoops > 0 && m.currentLoop < m.maxLoops {
 					return m.restartPipeline()
 				}
 				m.statusMsg = "Pipeline completed! Use ↑↓/jk to navigate steps"

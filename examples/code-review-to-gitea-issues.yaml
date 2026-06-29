@@ -1,12 +1,19 @@
-# Automated code review pipeline that analyzes multiple repos
-# and creates Gitea issues for findings (updates, improvements, concerns).
-#
-# Usage:
-#   1. Export env vars: GITEA_TOKEN, GITEA_URL, GITEA_OWNER
-#   2. Replace repo names with your own
-#   3. Run: octos code-review-to-gitea-issues.yaml
+# Automated code review pipeline that analyzes repos and creates
+# labeled Gitea issues for findings (updates, improvements, concerns).
+# Skips duplicates by checking existing open issues before creating.
 #
 # Labels created automatically: update, improvement, best-practice, concern
+#
+# Usage:
+#   1. Export env vars: GITEA_URL, GITEA_TOKEN
+#   2. Optionally set GITEA_OWNER and REPOS
+#   3. Run: octos code-review-to-gitea-issues.yaml
+#
+# Env vars:
+#   GITEA_URL    — Gitea instance URL (required)
+#   GITEA_TOKEN  — Personal access token (required)
+#   GITEA_OWNER  — User/org owning the repos (default: your-user)
+#   REPOS        — Comma-separated repo list (default: all configured)
 
 agent:
   cmd: "kiro-cli"
@@ -16,11 +23,8 @@ context:
   role: "Senior software engineer doing code review and prospection"
   gitea_url: "${GITEA_URL}"
   gitea_token: "${GITEA_TOKEN}"
-  gitea_owner: "${GITEA_OWNER}"
-  repos:
-    - project-alpha
-    - project-beta
-    - project-gamma
+  gitea_owner: "${GITEA_OWNER:-your-user}"
+  repos: "${REPOS:-project-alpha,project-beta,project-gamma}"
   labels:
     - "update"
     - "improvement"
@@ -38,9 +42,10 @@ steps:
     prompt: |
       Clone these repos from Gitea into /tmp/octos-review/ (remove that dir first if exists):
 
-      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-alpha.git /tmp/octos-review/project-alpha
-      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-beta.git /tmp/octos-review/project-beta
-      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/project-gamma.git /tmp/octos-review/project-gamma
+      Repos to clone (comma-separated list): {{context.repos}}
+
+      For each repo in that list:
+      git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/<repo>.git /tmp/octos-review/<repo>
 
       After cloning, list the file tree of each repo (no .git dirs). Output the tree for each.
 
@@ -73,10 +78,9 @@ steps:
 
   - name: setup-labels
     prompt: |
-      Create these labels in each of these Gitea repos if they don't exist already.
-      Use curl with token authentication.
+      Create these labels in each repo from this list: {{context.repos}}
+      Use curl with token authentication. Skip if they already exist.
 
-      Repos: project-alpha, project-beta, project-gamma
       Labels to create (with colors):
       - "update" color "#0075ca"
       - "improvement" color "#a2eeef"
@@ -84,10 +88,20 @@ steps:
       - "concern" color "#d73a4a"
 
       API: {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
-      Token: {{context.gitea_token}}
+      Auth: -H "Authorization: token {{context.gitea_token}}"
 
       For each repo, first GET existing labels, then POST only missing ones.
-      Use: -H "Authorization: token {{context.gitea_token}}"
+
+  - name: fetch-existing-issues
+    prompt: |
+      For each repo in this list: {{context.repos}}
+      Fetch ALL open issues from Gitea.
+
+      API: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues?state=open&type=issues&limit=50
+      Auth: -H "Authorization: token {{context.gitea_token}}"
+
+      Output a JSON object mapping repo name to list of existing issue titles.
+    save_to: existing-issues.json
 
   - name: create-issues
     load_from: findings.json
@@ -95,14 +109,17 @@ steps:
       Using the findings from the analysis:
       {{artifact.findings}}
 
-      Create one Gitea issue per finding using the API.
+      And the existing open issues:
+      {{fetch-existing-issues.output}}
 
-      API endpoint: POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues
-      Auth header: "Authorization: token {{context.gitea_token}}"
+      IMPORTANT: Do NOT create an issue if an issue with the same or very similar title already exists in that repo. Skip duplicates.
 
-      For each finding:
-      1. First, GET the label ID: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels and find the ID for the matching label name
-      2. Then POST the issue with:
+      For each NEW finding only:
+      1. GET the label ID: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
+      2. POST the issue:
+         API: POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues
+         Auth: -H "Authorization: token {{context.gitea_token}}"
+         Body:
          ```json
          {
            "title": "{finding.title}",
@@ -111,7 +128,7 @@ steps:
          }
          ```
 
-      Create ALL issues. Report how many were created per repo.
+      Report: how many created, how many skipped (already existed) per repo.
 
   - name: cleanup
     prompt: |

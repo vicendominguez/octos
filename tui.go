@@ -751,8 +751,13 @@ func (m *TUIModel) renderContent(width, contentHeight int) string {
 	m.outputView.SetContent(wrappedOutput)
 	
 	// Auto-scroll to bottom only if user hasn't manually scrolled and step is running
-	if !m.pipelineEnded && !m.userScrolling && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
-		m.outputView.GotoBottom()
+	if !m.pipelineEnded && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
+		if m.userScrolling && m.outputView.AtBottom() {
+			m.userScrolling = false
+		}
+		if !m.userScrolling {
+			m.outputView.GotoBottom()
+		}
 	}
 	
 	// Add focus indicator to panel titles

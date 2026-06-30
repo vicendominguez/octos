@@ -300,14 +300,7 @@ func buildPrompt(ctx *Context, newTask string) string {
 		buf.WriteString(fmt.Sprintf("%s: %v\n", k, v))
 	}
 
-	if len(ctx.Outputs) > 0 {
-		buf.WriteString("\n=== OUTPUT PASOS ANTERIORES ===\n")
-		for name, output := range ctx.Outputs {
-			buf.WriteString(fmt.Sprintf("[%s]:\n%s\n\n", name, output))
-		}
-	}
-
-	buf.WriteString("=== NUEVA TAREA ===\n")
+	buf.WriteString("\n=== NUEVA TAREA ===\n")
 	buf.WriteString(newTask)
 
 	return buf.String()

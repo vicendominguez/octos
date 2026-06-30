@@ -42,7 +42,6 @@ go build -o octos
 
 # Loop mode - run pipeline multiple times (Ralph loop pattern)
 ./octos --loop 3 pipeline.yaml        # Run 3 times
-./octos --loop 0 pipeline.yaml        # Loop until Ctrl+C
 ```
 
 ## Loop Mode (Ralph Pattern)

@@ -73,7 +73,7 @@ Full issue resolution pipeline with ralph loop support:
 - Creates merge request on success
 - Labels as state machine: (none) → in-progress → in-review
 
-**Use case:** Autonomous issue resolution with `octos --loop 0`
+**Use case:** Autonomous issue resolution with `octos --loop N`
 
 ```bash
 GITEA_URL=http://your-gitea:3000 GITEA_TOKEN=xxx octos examples/gitea-issue-to-mr.yaml

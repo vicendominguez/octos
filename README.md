@@ -218,14 +218,16 @@ steps:
 
 ### 🔗 Variable Interpolation
 
-Access data from previous steps and context:
+Reference data from previous steps and context in your prompts:
 
 ```yaml
 {{stepname.output}}           # Output from a previous step
 {{context.role}}              # Global context values
-{{context.rules}}             # Lists from context
+{{context.rules}}             # Lists rendered as "- item" lines
 {{artifact.filename}}         # Loaded artifact content
 ```
+
+Each step only receives the global context and its own prompt. Previous step outputs are NOT automatically included — reference them explicitly with `{{stepname.output}}` or use artifacts.
 
 ### 🌐 Environment Variables
 
@@ -264,7 +266,7 @@ steps:
 
 ### 💾 Artifacts
 
-Save and reuse outputs to reduce context size:
+Save and reuse outputs across steps:
 
 ```yaml
 steps:
@@ -278,7 +280,7 @@ steps:
 ```
 
 **Benefits:**
-- Reduce token usage by not accumulating all outputs
+- Each step only gets the context it needs (no token waste)
 - Reuse artifacts across different pipelines
 - Persist important outputs for later review
 

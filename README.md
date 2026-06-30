@@ -19,7 +19,7 @@ brew install octos
 
 ```bash
 wget https://github.com/vicendominguez/octos/releases/download/v0.7.2/octos_0.7.2_amd64.deb
-sudo dpkg -i octos_0.7.1_amd64.deb
+sudo dpkg -i octos_0.7.2_amd64.deb
 ```
 
 ### From source

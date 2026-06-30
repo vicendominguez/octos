@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"testing"
 )
 
@@ -12,12 +11,12 @@ func TestInterpolateResolvesContext(t *testing.T) {
 		Outputs: map[string]string{"step1": "output1"},
 	}
 
-	result := interpolate("{{context.name}} {{step1.output}}", ctx)
+	result, _ := interpolate("{{context.name}} {{step1.output}}", ctx)
 	if result != "test output1" {
 		t.Errorf("got %q, want %q", result, "test output1")
 	}
 
-	result = interpolate("{{context.items}}", ctx)
+	result, _ = interpolate("{{context.items}}", ctx)
 	if result != "- a\n- b" {
 		t.Errorf("got %q, want %q", result, "- a\n- b")
 	}
@@ -29,25 +28,31 @@ func TestInterpolateWarnsUnresolved(t *testing.T) {
 		Outputs: map[string]string{},
 	}
 
-	// Capture stderr
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	_, warnings := interpolate("{{context.typo}} and {{missing.output}}", ctx)
 
-	_ = interpolate("{{context.typo}} and {{missing.output}}", ctx)
-
-	w.Close()
-	os.Stderr = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	stderr := buf.String()
-
-	if !bytes.Contains([]byte(stderr), []byte("{{context.typo}}")) {
-		t.Errorf("expected warning about {{context.typo}}, got: %q", stderr)
+	// Verify warnings are returned
+	if len(warnings) != 2 {
+		t.Errorf("expected 2 warnings, got %d", len(warnings))
 	}
-	if !bytes.Contains([]byte(stderr), []byte("{{missing.output}}")) {
-		t.Errorf("expected warning about {{missing.output}}, got: %q", stderr)
+
+	found := false
+	for _, w := range warnings {
+		if bytes.Contains([]byte(w), []byte("{{context.typo}}")) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about {{context.typo}}, got: %v", warnings)
+	}
+
+	found = false
+	for _, w := range warnings {
+		if bytes.Contains([]byte(w), []byte("{{missing.output}}")) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about {{missing.output}}, got: %v", warnings)
 	}
 }
 
@@ -57,19 +62,9 @@ func TestInterpolateNoWarningWhenResolved(t *testing.T) {
 		Outputs: map[string]string{"step1": "done"},
 	}
 
-	old := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	_, warnings := interpolate("{{context.name}} {{step1.output}}", ctx)
 
-	_ = interpolate("{{context.name}} {{step1.output}}", ctx)
-
-	w.Close()
-	os.Stderr = old
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	if buf.Len() > 0 {
-		t.Errorf("expected no warnings, got: %q", buf.String())
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings returned, got %d: %v", len(warnings), warnings)
 	}
 }

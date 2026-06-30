@@ -205,8 +205,17 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		}
 
 		// Build prompt before callback
-		prompt := interpolate(step.Prompt, ctx)
+		prompt, warnings := interpolate(step.Prompt, ctx)
 		fullPrompt := buildPrompt(ctx, prompt)
+
+		// Route warnings: to TUI stream if available, otherwise stderr
+		for _, w := range warnings {
+			if onStream != nil {
+				onStream(i, w)
+			} else {
+				fmt.Fprintln(os.Stderr, w)
+			}
+		}
 
 		if onStart != nil {
 			onStart(i, prompt)
@@ -308,8 +317,9 @@ func buildPrompt(ctx *Context, newTask string) string {
 
 var unresolvedPlaceholderRegex = regexp.MustCompile(`\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}`)
 
-func interpolate(text string, ctx *Context) string {
+func interpolate(text string, ctx *Context) (string, []string) {
 	result := text
+	var warnings []string
 
 	for name, output := range ctx.Outputs {
 		placeholder := fmt.Sprintf("{{%s.output}}", name)
@@ -331,14 +341,14 @@ func interpolate(text string, ctx *Context) string {
 		}
 	}
 
-	// Warn about unresolved placeholders
+	// Collect unresolved placeholders as warnings
 	if matches := unresolvedPlaceholderRegex.FindAllString(result, -1); len(matches) > 0 {
 		for _, m := range matches {
-			fmt.Fprintf(os.Stderr, "⚠ unresolved placeholder: %s\n", m)
+			warnings = append(warnings, fmt.Sprintf("⚠ unresolved placeholder: %s", m))
 		}
 	}
 
-	return result
+	return result, warnings
 }
 
 func runAgent(agent AgentConfig, prompt string) (string, error) {

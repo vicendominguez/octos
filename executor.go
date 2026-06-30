@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var ansiRegex = regexp.MustCompile(`\x1b(\[[0-9;]*[a-zA-Z]|\(B|\)0)`)
+var ansiRegex = regexp.MustCompile(`\x1b(\[[0-9;?]*[a-zA-Z]|\(B|\)0)`)
 var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*`)
 var controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]`)
 var cursorMovementRegex = regexp.MustCompile(`\x1b\[[0-9]*[ABCDEFGHJKST]`)

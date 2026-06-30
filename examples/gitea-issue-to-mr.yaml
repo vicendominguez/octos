@@ -160,14 +160,20 @@ steps:
     when: "{{validate.output}} contains VALIDATED"
     load_from: current-issue.txt
     prompt: |
-      Create a pull request in Gitea:
+      The issue:
+      {{artifact.current-issue}}
+
+      The implementation (contains issue number and branch name):
+      {{implement.output}}
+
+      Create a pull request in Gitea using the issue number and branch from above:
 
       POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/pulls
       Auth: -H "Authorization: token {{context.gitea_token}}"
       Body:
       {
         "title": "Fix #{number}: <issue title>",
-        "body": "Closes #{number}\n\n## Changes\n<brief summary of changes>",
+        "body": "Closes #{number}\n\n## Changes\n<brief summary from implementation>",
         "head": "fix/issue-{number}",
         "base": "main"
       }

@@ -18,7 +18,7 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.8.0/octos_0.8.0_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v0.8.1/octos_0.8.1_amd64.deb
 sudo dpkg -i octos_0.7.2_amd64.deb
 ```
 

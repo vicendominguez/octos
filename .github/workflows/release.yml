@@ -16,7 +16,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
+
+      - run: go vet ./...
+      - run: go test -race ./...
 
       - name: Build binaries
         run: |
@@ -31,10 +34,8 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           mkdir -p deb/octos_${VERSION}_amd64/DEBIAN
           mkdir -p deb/octos_${VERSION}_amd64/usr/local/bin
-          
           cp octos-linux-amd64 deb/octos_${VERSION}_amd64/usr/local/bin/octos
           chmod +x deb/octos_${VERSION}_amd64/usr/local/bin/octos
-          
           cat > deb/octos_${VERSION}_amd64/DEBIAN/control <<EOF
           Package: octos
           Version: ${VERSION}
@@ -45,12 +46,10 @@ jobs:
           Description: LLM Agent Pipeline Orchestrator
            Minimalist orchestrator that executes YAML pipelines with CLI agents.
           EOF
-          
           dpkg-deb --build deb/octos_${VERSION}_amd64
           mv deb/octos_${VERSION}_amd64.deb octos_${VERSION}_amd64.deb
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
             octos-linux-amd64

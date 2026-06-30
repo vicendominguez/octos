@@ -313,6 +313,8 @@ func buildPrompt(ctx *Context, newTask string) string {
 	return buf.String()
 }
 
+var unresolvedPlaceholderRegex = regexp.MustCompile(`\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}`)
+
 func interpolate(text string, ctx *Context) string {
 	result := text
 
@@ -333,6 +335,13 @@ func interpolate(text string, ctx *Context) string {
 			result = strings.ReplaceAll(result, placeholder, strings.Join(lines, "\n"))
 		default:
 			result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", v))
+		}
+	}
+
+	// Warn about unresolved placeholders
+	if matches := unresolvedPlaceholderRegex.FindAllString(result, -1); len(matches) > 0 {
+		for _, m := range matches {
+			fmt.Fprintf(os.Stderr, "⚠ unresolved placeholder: %s\n", m)
 		}
 	}
 

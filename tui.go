@@ -809,10 +809,10 @@ func (m *TUIModel) isNarrowMode() bool {
 
 // renderNarrowView renders stacked layout for narrow terminals
 func (m *TUIModel) renderNarrowView() string {
-	const panelFrameV = 2 // border top + bottom
-	const panelFrameH = 4 // border left+right + padding left+right
-	
-	contentWidth := m.width
+	// In lipgloss v2, Width(W) is the TOTAL outer width (border+padding+text)
+	const frameTotal = 4 // border(2) + padding(2)
+	const borderV = 2
+
 	contentHeight := m.height
 
 	// Title (compact)
@@ -833,7 +833,6 @@ func (m *TUIModel) renderNarrowView() string {
 	progressText := fmt.Sprintf("%d/%d", completed, len(m.steps))
 	progressLine := progressBarStyle.Render(progressBar) + " " + progressText
 
-	// Calculate available height for panels
 	// Fixed: title(1) + progress(1) + help(1) = 3 lines
 	fixedHeight := 3
 	availableHeight := contentHeight - fixedHeight
@@ -841,40 +840,41 @@ func (m *TUIModel) renderNarrowView() string {
 		availableHeight = 10
 	}
 
-	// Steps panel (30% of available height, min 3)
-	stepsContentHeight := (availableHeight * 30) / 100 - panelFrameV
-	if stepsContentHeight < 3 {
-		stepsContentHeight = 3
+	// Panel outer = terminal width, text = width - frameTotal
+	panelOuter := m.width
+	textWidth := panelOuter - frameTotal
+	if textWidth < 10 {
+		textWidth = 10
 	}
-	
-	panelContentWidth := contentWidth - panelFrameH
-	if panelContentWidth < 10 {
-		panelContentWidth = 10
+
+	// Steps panel (30% of available height)
+	stepsOuter := (availableHeight * 30) / 100
+	if stepsOuter < 3 + borderV {
+		stepsOuter = 3 + borderV
 	}
-	
-	m.stepsView.SetWidth(panelContentWidth)
-	m.stepsView.SetHeight(stepsContentHeight)
+	stepsTextHeight := stepsOuter - borderV
+
+	m.stepsView.SetWidth(textWidth)
+	m.stepsView.SetHeight(stepsTextHeight)
 	m.stepsView.SetContent(m.buildStepsView(false, false))
-	stepsPanel := panelStyle.Width(panelContentWidth).Height(stepsContentHeight).Render(m.stepsView.View())
+	stepsPanel := panelStyle.Width(panelOuter).Render(m.stepsView.View())
+	stepsPanel = fixedHeightContent(stepsPanel, stepsOuter)
 
 	// Output panel (remaining height)
-	stepsOuterHeight := stepsContentHeight + panelFrameV
-	outputContentHeight := availableHeight - stepsOuterHeight - panelFrameV
-	if outputContentHeight < 5 {
-		outputContentHeight = 5
+	outputOuter := availableHeight - stepsOuter
+	if outputOuter < 5 + borderV {
+		outputOuter = 5 + borderV
 	}
-	
-	// Viewport height = panel content - title line
-	outputViewportHeight := outputContentHeight - 1 // "TITLE\n" = 1 line overhead
-	if outputViewportHeight < 3 {
-		outputViewportHeight = 3
+	outputTextHeight := outputOuter - borderV - 1 // -1 for title line
+	if outputTextHeight < 3 {
+		outputTextHeight = 3
 	}
-	
-	m.outputView.SetWidth(panelContentWidth)
-	m.outputView.SetHeight(outputViewportHeight)
-	
+
+	m.outputView.SetWidth(textWidth)
+	m.outputView.SetHeight(outputTextHeight)
+	m.outputView.SoftWrap = true
+
 	displayStep := m.getDisplayStep()
-	
 	currentStepName := "Waiting..."
 	outputContent := "Pipeline starting..."
 	if displayStep < len(m.steps) {
@@ -884,14 +884,14 @@ func (m *TUIModel) renderNarrowView() string {
 		}
 	}
 	m.outputView.SetContent(outputContent)
-	
+
 	outputTitle := fmt.Sprintf("OUT: %s", currentStepName)
 	if m.focusedPanel == FocusOutput {
 		outputTitle += " ◀"
 	}
-	outputPanel := panelStyle.Width(panelContentWidth).Height(outputContentHeight).Render(
-		PanelTitleStyle().Render(outputTitle) + "\n" + m.outputView.View(),
-	)
+	outputPanel := panelStyle.Width(panelOuter).Render(
+		PanelTitleStyle().Render(outputTitle) + "\n" + m.outputView.View())
+	outputPanel = fixedHeightContent(outputPanel, outputOuter)
 
 	// Help (compact)
 	help := "[Tab] Switch │ [j/k] Scroll │ [q] Quit"
@@ -906,15 +906,6 @@ func (m *TUIModel) renderNarrowView() string {
 	)
 
 	return content
-}
-
-// calculateStepsWidth returns the width for the steps panel based on terminal width
-func (m *TUIModel) calculateStepsWidth(contentWidth int) int {
-	stepsWidth := (contentWidth * StepsWidthPct) / 100
-	if stepsWidth < MinStepsWidth {
-		stepsWidth = MinStepsWidth
-	}
-	return stepsWidth
 }
 
 // fixedHeightContent truncates or pads content to exactly `height` lines.
@@ -949,10 +940,9 @@ func (m *TUIModel) initPromptView() {
 		popupHeight = PopupMaxHeight
 	}
 	
-	wrappedPrompt := prompt
 	m.promptView = viewport.New(viewport.WithWidth(popupWidth-popupTextPadding), viewport.WithHeight(popupHeight-popupViewportOffset))
 	m.promptView.SoftWrap = true
-	m.promptView.SetContent(wrappedPrompt)
+	m.promptView.SetContent(prompt)
 }
 
 // restartPipeline resets the pipeline state and starts again

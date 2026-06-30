@@ -322,8 +322,12 @@ func interpolate(text string, ctx *Context) (string, []string) {
 	var warnings []string
 
 	for name, output := range ctx.Outputs {
+		// {{step_name.output}} for step outputs
 		placeholder := fmt.Sprintf("{{%s.output}}", name)
 		result = strings.ReplaceAll(result, placeholder, output)
+		// {{artifact.X}} directly (when stored as ctx.Outputs["artifact.X"])
+		direct := fmt.Sprintf("{{%s}}", name)
+		result = strings.ReplaceAll(result, direct, output)
 	}
 
 	// Interpolate all context values

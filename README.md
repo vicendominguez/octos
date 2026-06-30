@@ -222,12 +222,13 @@ Reference data from previous steps and context in your prompts:
 
 ```yaml
 {{stepname.output}}           # Output from a previous step
+{{stepname}}                  # Shorthand for {{stepname.output}}
 {{context.role}}              # Global context values
 {{context.rules}}             # Lists rendered as "- item" lines
-{{artifact.filename}}         # Loaded artifact content
+{{artifact.filename}}         # Loaded artifact content (requires load_from)
 ```
 
-Each step only receives the global context and its own prompt. Previous step outputs are NOT automatically included — reference them explicitly with `{{stepname.output}}` or use artifacts.
+Each step only receives the global context and its own prompt. Previous step outputs are NOT automatically included — reference them explicitly with `{{stepname.output}}` (or `{{stepname}}`) or use artifacts.
 
 ### 🌐 Environment Variables
 

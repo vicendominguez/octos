@@ -68,3 +68,44 @@ func TestInterpolateNoWarningWhenResolved(t *testing.T) {
 		t.Errorf("expected no warnings returned, got %d: %v", len(warnings), warnings)
 	}
 }
+
+func TestInterpolateResolvesArtifacts(t *testing.T) {
+	ctx := &Context{
+		Global: map[string]any{},
+		Outputs: map[string]string{
+			"artifact.plan":     "the plan content",
+			"artifact.analysis": "the analysis content",
+			"step1":             "step1 output",
+		},
+	}
+
+	// {{artifact.plan}} should resolve directly
+	result, warnings := interpolate("Plan: {{artifact.plan}}", ctx)
+	if result != "Plan: the plan content" {
+		t.Errorf("artifact.plan: got %q, want %q", result, "Plan: the plan content")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+
+	// {{artifact.analysis}} should resolve directly
+	result, warnings = interpolate("Analysis: {{artifact.analysis}}", ctx)
+	if result != "Analysis: the analysis content" {
+		t.Errorf("artifact.analysis: got %q, want %q", result, "Analysis: the analysis content")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+
+	// {{step1.output}} still works
+	result, _ = interpolate("{{step1.output}}", ctx)
+	if result != "step1 output" {
+		t.Errorf("step1.output: got %q, want %q", result, "step1 output")
+	}
+
+	// {{step1}} also resolves directly (step name without .output)
+	result, _ = interpolate("{{step1}}", ctx)
+	if result != "step1 output" {
+		t.Errorf("direct step1: got %q, want %q", result, "step1 output")
+	}
+}

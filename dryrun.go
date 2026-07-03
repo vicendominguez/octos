@@ -29,7 +29,7 @@ func DryRun(p *Pipeline) error {
 	}
 
 	// Build context for interpolation checking
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global:  p.Context,
 		Outputs: make(map[string]string),
 	}
@@ -205,7 +205,7 @@ func isValidConditionSyntax(condition string) bool {
 }
 
 // checkInterpolation validates placeholders in a prompt without resolving runtime values
-func checkInterpolation(text string, ctx *Context, producedOutputs map[string]bool, producedArtifacts map[string]string) []string {
+func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[string]bool, producedArtifacts map[string]string) []string {
 	var warnings []string
 	matches := unresolvedPlaceholderRegex.FindAllString(text, -1)
 	for _, m := range matches {

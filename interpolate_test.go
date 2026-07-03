@@ -6,7 +6,7 @@ import (
 )
 
 func TestInterpolateResolvesContext(t *testing.T) {
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global:  map[string]any{"name": "test", "items": []any{"a", "b"}},
 		Outputs: map[string]string{"step1": "output1"},
 	}
@@ -23,7 +23,7 @@ func TestInterpolateResolvesContext(t *testing.T) {
 }
 
 func TestInterpolateWarnsUnresolved(t *testing.T) {
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global:  map[string]any{"name": "test"},
 		Outputs: map[string]string{},
 	}
@@ -57,7 +57,7 @@ func TestInterpolateWarnsUnresolved(t *testing.T) {
 }
 
 func TestInterpolateNoWarningWhenResolved(t *testing.T) {
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global:  map[string]any{"name": "test"},
 		Outputs: map[string]string{"step1": "done"},
 	}
@@ -70,7 +70,7 @@ func TestInterpolateNoWarningWhenResolved(t *testing.T) {
 }
 
 func TestInterpolateResolvesArtifacts(t *testing.T) {
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global: map[string]any{},
 		Outputs: map[string]string{
 			"artifact.plan":     "the plan content",

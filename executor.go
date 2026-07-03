@@ -139,7 +139,7 @@ func stripANSI(s string) string {
 	return s
 }
 
-type Context struct {
+type PipelineContext struct {
 	Global  map[string]any
 	Outputs map[string]string
 }
@@ -191,7 +191,7 @@ func RunPipelineWithResume(p *Pipeline, resume bool) error {
 }
 
 func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, onRetry RetryCallback, runner *PipelineRunner, resume bool) error {
-	ctx := &Context{
+	ctx := &PipelineContext{
 		Global:  p.Context,
 		Outputs: make(map[string]string),
 	}
@@ -416,7 +416,7 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 	return nil
 }
 
-func buildPrompt(ctx *Context, newTask string) string {
+func buildPrompt(ctx *PipelineContext, newTask string) string {
 	var buf bytes.Buffer
 
 	buf.WriteString("=== CONTEXTO GLOBAL ===\n")
@@ -432,7 +432,7 @@ func buildPrompt(ctx *Context, newTask string) string {
 
 var unresolvedPlaceholderRegex = regexp.MustCompile(`\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}`)
 
-func interpolate(text string, ctx *Context) (string, []string) {
+func interpolate(text string, ctx *PipelineContext) (string, []string) {
 	result := text
 	var warnings []string
 

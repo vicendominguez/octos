@@ -1,0 +1,32 @@
+# Goose pipeline using stdin to pass prompts
+# This avoids "argument list too long" errors with large prompts
+agent:
+  cmd: "goose"
+  args: ["run", "-i", "-"]
+  stdin: true
+
+context:
+  role: "Senior backend engineer"
+  rules:
+    - "Keep changes minimal"
+    - "Write tests for new code"
+    - "Follow existing code style"
+
+steps:
+  - name: analyze
+    prompt: |
+      Analyze this codebase and identify:
+      1. Main entry points
+      2. Code structure
+      3. Potential improvements
+    save_to: analysis.txt
+
+  - name: implement
+    load_from: analysis.txt
+    prompt: |
+      Based on this analysis:
+      {{artifact.analysis}}
+
+      Implement the most impactful improvement.
+      Follow these rules:
+      {{context.rules}}

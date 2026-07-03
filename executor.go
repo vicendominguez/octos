@@ -356,8 +356,14 @@ func interpolate(text string, ctx *Context) (string, []string) {
 }
 
 func runAgent(agent AgentConfig, prompt string) (string, error) {
-	args := append(agent.Args, prompt)
-	cmd := exec.Command(agent.Cmd, args...)
+	var cmd *exec.Cmd
+	if agent.Stdin {
+		cmd = exec.Command(agent.Cmd, agent.Args...)
+		cmd.Stdin = strings.NewReader(prompt)
+	} else {
+		args := append(agent.Args, prompt)
+		cmd = exec.Command(agent.Cmd, args...)
+	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -368,8 +374,14 @@ func runAgent(agent AgentConfig, prompt string) (string, error) {
 }
 
 func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)) (string, error) {
-	args := append(agent.Args, prompt)
-	cmd := exec.Command(agent.Cmd, args...)
+	var cmd *exec.Cmd
+	if agent.Stdin {
+		cmd = exec.Command(agent.Cmd, agent.Args...)
+		cmd.Stdin = strings.NewReader(prompt)
+	} else {
+		args := append(agent.Args, prompt)
+		cmd = exec.Command(agent.Cmd, args...)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

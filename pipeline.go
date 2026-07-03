@@ -17,8 +17,9 @@ type Pipeline struct {
 }
 
 type AgentConfig struct {
-	Cmd  string   `yaml:"cmd"`
-	Args []string `yaml:"args"`
+	Cmd   string   `yaml:"cmd"`
+	Args  []string `yaml:"args"`
+	Stdin bool     `yaml:"stdin,omitempty"`
 }
 
 type Step struct {

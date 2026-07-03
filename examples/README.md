@@ -79,6 +79,18 @@ Full issue resolution pipeline with ralph loop support:
 GITEA_URL=http://your-gitea:3000 GITEA_TOKEN=xxx octos examples/gitea-issue-to-mr.yaml
 ```
 
+### 7. `goose-stdin.yaml` - Goose with Stdin Prompt Delivery
+Pipeline demonstrating `stdin: true` for agents that read prompts from stdin:
+- Avoids "argument list too long" errors with large interpolated prompts
+- Uses `goose run -i -` which reads instructions from stdin
+- Required for agents with CLI argument length limitations
+
+**Use case:** Goose pipelines with large artifacts/context
+
+```bash
+./octos examples/goose-stdin.yaml
+```
+
 ## Running Examples
 
 ```bash

@@ -346,6 +346,39 @@ steps:
 - Mix different CLI agents in the same pipeline
 - Each step can have its own agent configuration
 
+### 📥 Stdin Prompt Delivery
+
+Pass prompts via stdin instead of CLI arguments. This avoids "argument list too long" errors when prompts grow large (e.g., with interpolated artifacts):
+
+```yaml
+agent:
+  cmd: "goose"
+  args: ["run", "-i", "-"]
+  stdin: true
+
+steps:
+  - name: analyze
+    prompt: "Analyze the codebase"
+    save_to: analysis.txt
+
+  - name: implement
+    load_from: analysis.txt
+    prompt: |
+      Based on this analysis:
+      {{artifact.analysis}}
+      Implement improvements.
+```
+
+**When to use:**
+- Agent CLI has argument length limitations (e.g., goose with `-t`)
+- Prompts include large interpolated artifacts
+- OS `ARG_MAX` limits are hit with long prompts
+
+**Compatible agents:**
+- `goose run -i -` — reads instructions from stdin
+- Any agent that accepts input via stdin
+- Per-step override: combine stdin and non-stdin agents in the same pipeline
+
 ### 🔄 Resume & Checkpoints
 
 Automatically saves state after each successful step:

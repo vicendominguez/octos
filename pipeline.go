@@ -90,7 +90,7 @@ func LoadPipeline(path string) (*Pipeline, error) {
 
 	// Ensure artifacts directory exists
 	artifactsDir := filepath.Join(".octos", "artifacts")
-	if err := os.MkdirAll(artifactsDir, 0755); err != nil {
+	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
 		return nil, err
 	}
 

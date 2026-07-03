@@ -73,7 +73,7 @@ func loadArtifact(filename string) (string, error) {
 // saveArtifact saves content to artifacts directory
 func saveArtifact(filename, content string) error {
 	path := filepath.Join(".octos", "artifacts", filename)
-	return os.WriteFile(path, []byte(content), 0644)
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 // detectFileChanges compares directory state before/after to find changes

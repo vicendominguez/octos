@@ -25,7 +25,7 @@ func getStateFile(pipelineFile string) string {
 
 func SaveState(state *PipelineState) error {
 	stateDir := getStateDir()
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
 
@@ -36,7 +36,7 @@ func SaveState(state *PipelineState) error {
 		return err
 	}
 
-	return os.WriteFile(getStateFile(state.PipelineFile), data, 0644)
+	return os.WriteFile(getStateFile(state.PipelineFile), data, 0o644)
 }
 
 func LoadState(pipelineFile string) (*PipelineState, error) {

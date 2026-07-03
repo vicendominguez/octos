@@ -263,6 +263,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stepStreamMsg:
 		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Output += msg.line + "\n"
+			// Cap output to prevent memory leak in long-running pipelines
+			const maxOutputBytes = 512 * 1024
+			if len(m.steps[msg.index].Output) > maxOutputBytes {
+				m.steps[msg.index].Output = m.steps[msg.index].Output[len(m.steps[msg.index].Output)-maxOutputBytes:]
+			}
 		}
 		return m, nil
 

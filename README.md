@@ -399,6 +399,31 @@ steps:
 - Any agent that accepts input via stdin
 - Per-step override: combine stdin and non-stdin agents in the same pipeline
 
+### 🛡️ Failure Handling (`on_failure`)
+
+Control what happens when a step fails:
+
+```yaml
+steps:
+  - name: risky-step
+    prompt: "Try something that might fail"
+    on_failure: retry      # retry | skip | fail_fast (default)
+    max_retries: 2         # only applies with on_failure: retry
+
+  - name: optional-step
+    prompt: "Nice to have but not critical"
+    on_failure: skip       # pipeline continues if this fails
+
+  - name: critical-step
+    prompt: "Must succeed"
+    on_failure: fail_fast  # default behavior: stop pipeline on failure
+```
+
+**Policies:**
+- `fail_fast` (default) — Stop the pipeline immediately. Use `--resume` to retry later.
+- `skip` — Log the failure and continue to the next step. Skipped steps don't produce output — subsequent `{{stepname.output}}` references will be empty.
+- `retry` — Retry up to `max_retries` times before giving up. Each retry injects the previous error into the prompt so the agent can self-correct.
+
 ### 🔄 Resume & Checkpoints
 
 Automatically saves state after each successful step:

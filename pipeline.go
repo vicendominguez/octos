@@ -30,6 +30,8 @@ type Step struct {
 	LoadFrom   string       `yaml:"load_from"`
 	When       string       `yaml:"when"`
 	Agent      *AgentConfig `yaml:"agent,omitempty"`
+	OnFailure  string       `yaml:"on_failure,omitempty"`
+	MaxRetries int          `yaml:"max_retries,omitempty"`
 }
 
 // expandEnvWithDefaults expands ${VAR}, $VAR, and ${VAR:-default} syntax.
@@ -111,6 +113,12 @@ func (p *Pipeline) Validate() error {
 		}
 		if step.Prompt == "" {
 			return fmt.Errorf("step %d (%s): prompt or prompt_file is required", i+1, step.Name)
+		}
+		if step.OnFailure != "" && step.OnFailure != "retry" && step.OnFailure != "skip" && step.OnFailure != "fail_fast" {
+			return fmt.Errorf("step %d (%s): on_failure must be 'retry', 'skip', or 'fail_fast'", i+1, step.Name)
+		}
+		if step.MaxRetries > 0 && step.OnFailure != "retry" {
+			return fmt.Errorf("step %d (%s): max_retries requires on_failure: retry", i+1, step.Name)
 		}
 	}
 	

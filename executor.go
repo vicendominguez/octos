@@ -239,21 +239,78 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		var output string
 		var err error
 
-		if onStream != nil {
-			output, err = runAgentWithStreaming(agent, fullPrompt, func(line string) {
-				onStream(i, line)
-			})
-		} else {
-			output, err = runAgent(agent, fullPrompt)
+		// Determine failure policy
+		onFailure := step.OnFailure
+		if onFailure == "" {
+			onFailure = "fail_fast"
+		}
+		maxRetries := step.MaxRetries
+		if maxRetries <= 0 && onFailure == "retry" {
+			maxRetries = 1
+		}
+
+		// Execute with retry logic
+		attempts := 0
+		retryPrompt := fullPrompt
+		for {
+			attempts++
+			if onStream != nil {
+				output, err = runAgentWithStreaming(agent, retryPrompt, func(line string) {
+					onStream(i, line)
+				})
+			} else {
+				output, err = runAgent(agent, retryPrompt)
+			}
+
+			if err == nil {
+				break
+			}
+
+			// Agent failed
+			if onFailure == "retry" && attempts <= maxRetries {
+				if !silent {
+					fmt.Printf("⚠ Step %s failed (attempt %d/%d), retrying...\n", step.Name, attempts, maxRetries+1)
+				}
+				if onStream != nil {
+					onStream(i, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
+				}
+				// Inject error into retry prompt
+				retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
+				continue
+			}
+
+			break
 		}
 
 		duration := time.Since(start)
 
 		if err != nil {
-			if onComplete != nil {
-				onComplete(i, duration, err)
+			switch onFailure {
+			case "skip":
+				if !silent {
+					fmt.Printf("⊘ Step %s failed, skipping (on_failure: skip): %v\n", step.Name, err)
+				}
+				if onStream != nil {
+					onStream(i, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
+				}
+				if onComplete != nil {
+					onComplete(i, duration, nil)
+				}
+				// Save state and continue to next step
+				state := &PipelineState{
+					PipelineFile:      p.File,
+					LastCompletedStep: i,
+					Outputs:           ctx.Outputs,
+					StartTime:         startTime.Format(time.RFC3339),
+				}
+				SaveState(state)
+				continue
+			default: // fail_fast or retry exhausted
+				if onComplete != nil {
+					onComplete(i, duration, err)
+				}
+				return fmt.Errorf("step %s failed: %w", step.Name, err)
 			}
-			return fmt.Errorf("step %s failed: %w", step.Name, err)
 		}
 
 		ctx.Outputs[step.Name] = output

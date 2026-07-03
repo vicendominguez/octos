@@ -496,9 +496,12 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 		}
 	}()
 
+	// Wait for the process to finish — this closes pipes and unblocks scanners
+	cmdErr := cmd.Wait()
 	wg.Wait()
-	if err := cmd.Wait(); err != nil {
-		return output.String(), err
+
+	if cmdErr != nil {
+		return output.String(), cmdErr
 	}
 
 	return output.String(), nil

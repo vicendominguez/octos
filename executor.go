@@ -164,8 +164,8 @@ type PipelineRunner struct {
 func (r *PipelineRunner) KillCurrentStep() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.killed = true
 	if r.activeCmd != nil && r.activeCmd.Process != nil {
-		r.killed = true
 		r.activeCmd.Process.Kill()
 	}
 }
@@ -175,7 +175,6 @@ func (r *PipelineRunner) setActiveCmd(cmd *exec.Cmd) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.activeCmd = cmd
-	r.killed = false
 }
 
 // clearActiveCmd removes the reference to the finished command.
@@ -185,11 +184,13 @@ func (r *PipelineRunner) clearActiveCmd() {
 	r.activeCmd = nil
 }
 
-// wasKilled returns true if the last process was killed via KillCurrentStep.
-func (r *PipelineRunner) wasKilled() bool {
+// consumeKilled reports whether a manual kill was requested and resets the flag.
+func (r *PipelineRunner) consumeKilled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.killed
+	k := r.killed
+	r.killed = false
+	return k
 }
 
 // RunOptions configures pipeline execution behavior and callbacks.
@@ -347,7 +348,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			}
 
 			// If killed via R key (manual retry), restart immediately
-			if runner != nil && runner.wasKilled() {
+			if runner != nil && runner.consumeKilled() {
 				if onStream != nil {
 					onStream(i, "⟳ Manual retry requested — restarting step...")
 				}

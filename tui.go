@@ -140,10 +140,11 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 
 	// Load state if resuming
 	if resume && StateExists(p.File) {
-		state, _ := LoadState(p.File)
-		for i := 0; i <= state.LastCompletedStep && i < len(steps); i++ {
-			steps[i].Status = StatusCompleted
-			steps[i].Duration = time.Second // Placeholder
+		if state, err := LoadState(p.File); err == nil {
+			for i := 0; i <= state.LastCompletedStep && i < len(steps); i++ {
+				steps[i].Status = StatusCompleted
+				steps[i].Duration = time.Second // Placeholder
+			}
 		}
 	}
 

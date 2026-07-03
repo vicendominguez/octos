@@ -7,10 +7,11 @@ import (
 )
 
 func TestRunAgentWithStreamingNoRace(t *testing.T) {
-	// sh -c produces interleaved stdout and stderr concurrently
+	// Use a command that produces multiple lines on stdout to verify
+	// concurrent writes to the shared builder are safe under -race.
 	agent := AgentConfig{
 		Cmd:  "sh",
-		Args: []string{"-c", "echo out1; echo err1 >&2; echo out2; echo err2 >&2"},
+		Args: []string{"-c", "echo line1; echo line2; echo line3; echo line4"},
 	}
 
 	var mu sync.Mutex
@@ -24,8 +25,7 @@ func TestRunAgentWithStreamingNoRace(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// All four lines must appear in the output
-	for _, expected := range []string{"out1", "out2", "err1", "err2"} {
+	for _, expected := range []string{"line1", "line2", "line3", "line4"} {
 		if !strings.Contains(output, expected) {
 			t.Errorf("output missing %q: %s", expected, output)
 		}

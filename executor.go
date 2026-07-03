@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -521,7 +520,7 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 	// Detach from controlling terminal when running in TUI mode to prevent
 	// child processes from suspending octos via SIGTTIN/SIGTTOU.
 	if runner != nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		detachFromTerminal(cmd)
 	}
 
 	if err := cmd.Start(); err != nil {

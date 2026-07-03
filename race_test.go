@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +17,7 @@ func TestRunAgentWithStreamingNoRace(t *testing.T) {
 
 	var mu sync.Mutex
 	var lines []string
-	output, err := runAgentWithStreaming(agent, "", func(line string) {
+	output, err := runAgentWithStreaming(context.Background(), agent, "", func(line string) {
 		mu.Lock()
 		lines = append(lines, line)
 		mu.Unlock()

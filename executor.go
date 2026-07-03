@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -193,6 +194,7 @@ func (r *PipelineRunner) wasKilled() bool {
 
 // RunOptions configures pipeline execution behavior and callbacks.
 type RunOptions struct {
+	Ctx           context.Context
 	OnStart       ProgressCallback
 	OnOutput      ProgressCallback
 	OnComplete    StepCallback
@@ -212,6 +214,10 @@ func RunPipelineWithResume(p *Pipeline, resume bool) error {
 }
 
 func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
+	runCtx := opts.Ctx
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	onStart := opts.OnStart
 	onOutput := opts.OnOutput
 	onComplete := opts.OnComplete
@@ -329,11 +335,11 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		for {
 			attempts++
 			if onStream != nil {
-				output, err = runAgentWithStreaming(agent, retryPrompt, func(line string) {
+				output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
 					onStream(i, line)
 				}, runner)
 			} else {
-				output, err = runAgent(agent, retryPrompt, runner)
+				output, err = runAgent(runCtx, agent, retryPrompt, runner)
 			}
 
 			if err == nil {
@@ -507,13 +513,13 @@ func buildArgs(agent AgentConfig, prompt string) []string {
 	return append(slices.Clone(agent.Args), prompt)
 }
 
-func runAgent(agent AgentConfig, prompt string, runner *PipelineRunner) (string, error) {
+func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
-		cmd = exec.Command(agent.Cmd, agent.Args...)
+		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
 		cmd.Stdin = strings.NewReader(prompt)
 	} else {
-		cmd = exec.Command(agent.Cmd, buildArgs(agent, prompt)...)
+		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
 	}
 
 	if runner != nil {
@@ -531,7 +537,7 @@ func runAgent(agent AgentConfig, prompt string, runner *PipelineRunner) (string,
 	return stripANSI(string(output)), nil
 }
 
-func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner) (string, error) {
+func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.Command(agent.Cmd, agent.Args...)
@@ -563,6 +569,17 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 	if runner != nil {
 		runner.setActiveCmd(cmd)
 	}
+
+	// Monitor context cancellation — kill process if ctx is done
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			cmd.Process.Kill()
+		case <-done:
+		}
+	}()
 
 	var (
 		mu     sync.Mutex

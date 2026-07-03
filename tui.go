@@ -701,11 +701,11 @@ func (m *TUIModel) buildHelpText() string {
 		}
 	} else {
 		if m.width >= extraWideTerminalWidth {
-			return "⌨  [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+			return "⌨  [R] Retry step │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
 		} else if m.width >= narrowTerminalWidth {
-			return "⌨  [Tab] Panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
+			return "⌨  [R] Retry │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
 		} else {
-			return "⌨  [Tab] Panel │ [j/k] Scroll │ [q] Quit"
+			return "⌨  [R] Retry │ [Tab] Panel │ [q] Quit"
 		}
 	}
 }

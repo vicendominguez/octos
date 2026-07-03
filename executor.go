@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,28 +103,25 @@ func detectFileChanges(beforeFiles map[string]time.Time) []string {
 // scanDirectory recursively scans directory and returns file paths with mod times
 func scanDirectory(root string) map[string]time.Time {
 	files := make(map[string]time.Time)
-	
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		
-		// Skip hidden dirs and common ignore patterns
-		if strings.Contains(path, "/.") || 
-		   strings.Contains(path, "/node_modules/") ||
-		   strings.Contains(path, "/.octos/") {
-			if info.IsDir() {
+		if strings.Contains(path, "/.") ||
+			strings.Contains(path, "/node_modules/") ||
+			strings.Contains(path, "/.octos/") {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		
-		if !info.IsDir() {
-			files[path] = info.ModTime()
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				files[path] = info.ModTime()
+			}
 		}
 		return nil
 	})
-	
 	return files
 }
 

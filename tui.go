@@ -97,6 +97,7 @@ type TUIModel struct {
 	focusedPanel   FocusedPanel
 	maxLoops       int
 	currentLoop    int
+	runner         *PipelineRunner
 }
 
 type stepStartMsg struct {
@@ -171,6 +172,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 		gitBranch:   gitBranch,
 		maxLoops:    0,
 		currentLoop: 1,
+		runner:      &PipelineRunner{},
 	}
 }
 
@@ -210,7 +212,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Start pipeline after window is ready
 		if m.program != nil {
 			m.statusMsg = "Starting pipeline..."
-			go runPipelineWithProgram(m.pipeline, m.resuming, m.program)
+			go runPipelineWithProgram(m.pipeline, m.resuming, m.program, m.runner)
 		}
 		return m, nil
 
@@ -332,6 +334,9 @@ func (m *TUIModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	
 	case "r":
 		return m.handleRestartKey()
+	
+	case "R":
+		return m.handleRetryStepKey()
 	
 	case "j", "down":
 		return m.handleDownKey()
@@ -458,6 +463,17 @@ func (m *TUIModel) handleRestartKey() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.restartPipeline()
+	}
+	return m, nil
+}
+
+func (m *TUIModel) handleRetryStepKey() (tea.Model, tea.Cmd) {
+	if m.pipelineEnded || m.runner == nil {
+		return m, nil
+	}
+	if m.currentStep < len(m.steps) && m.steps[m.currentStep].Status == StatusRunning {
+		m.statusMsg = fmt.Sprintf("Retrying step: %s", m.steps[m.currentStep].Name)
+		m.runner.KillCurrentStep()
 	}
 	return m, nil
 }
@@ -1072,7 +1088,7 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 	)
 }
 
-func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program) {
+func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program, runner *PipelineRunner) {
 	RunPipelineWithCallbacks(p,
 		func(stepIndex int, prompt string) {
 			if program != nil {
@@ -1104,6 +1120,7 @@ func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program) {
 				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
 			}
 		},
+		runner,
 		resume,
 	)
 }

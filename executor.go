@@ -150,15 +150,47 @@ type StreamCallback func(stepIndex int, line string)
 type FileChangesCallback func(stepIndex int, changes []string)
 type RetryCallback func(stepIndex int, attempt int, maxRetries int)
 
+// PipelineRunner manages pipeline execution and exposes control over the active agent process.
+type PipelineRunner struct {
+	activeCmd *exec.Cmd
+	mu        sync.Mutex
+	killed    bool
+}
+
+// KillCurrentStep kills the currently running agent process, causing the step to be retried.
+func (r *PipelineRunner) KillCurrentStep() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.activeCmd != nil && r.activeCmd.Process != nil {
+		r.killed = true
+		r.activeCmd.Process.Kill()
+	}
+}
+
+// setActiveCmd stores the current command for external kill support.
+func (r *PipelineRunner) setActiveCmd(cmd *exec.Cmd) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.activeCmd = cmd
+	r.killed = false
+}
+
+// wasKilled returns true if the last process was killed via KillCurrentStep.
+func (r *PipelineRunner) wasKilled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.killed
+}
+
 func RunPipeline(p *Pipeline) error {
 	return RunPipelineWithResume(p, false)
 }
 
 func RunPipelineWithResume(p *Pipeline, resume bool) error {
-	return RunPipelineWithCallbacks(p, nil, nil, nil, nil, nil, nil, resume)
+	return RunPipelineWithCallbacks(p, nil, nil, nil, nil, nil, nil, nil, resume)
 }
 
-func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, onRetry RetryCallback, resume bool) error {
+func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, onRetry RetryCallback, runner *PipelineRunner, resume bool) error {
 	ctx := &Context{
 		Global:  p.Context,
 		Outputs: make(map[string]string),
@@ -269,13 +301,23 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 			if onStream != nil {
 				output, err = runAgentWithStreaming(agent, retryPrompt, func(line string) {
 					onStream(i, line)
-				})
+				}, runner)
 			} else {
-				output, err = runAgent(agent, retryPrompt)
+				output, err = runAgent(agent, retryPrompt, runner)
 			}
 
 			if err == nil {
 				break
+			}
+
+			// If killed via R key (manual retry), restart immediately
+			if runner != nil && runner.wasKilled() {
+				if onStream != nil {
+					onStream(i, "⟳ Manual retry requested — restarting step...")
+				}
+				retryPrompt = fullPrompt
+				attempts = 0
+				continue
 			}
 
 			// Agent failed
@@ -428,7 +470,7 @@ func interpolate(text string, ctx *Context) (string, []string) {
 	return result, warnings
 }
 
-func runAgent(agent AgentConfig, prompt string) (string, error) {
+func runAgent(agent AgentConfig, prompt string, runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.Command(agent.Cmd, agent.Args...)
@@ -436,6 +478,10 @@ func runAgent(agent AgentConfig, prompt string) (string, error) {
 	} else {
 		args := append(agent.Args, prompt)
 		cmd = exec.Command(agent.Cmd, args...)
+	}
+
+	if runner != nil {
+		runner.setActiveCmd(cmd)
 	}
 
 	output, err := cmd.CombinedOutput()
@@ -446,7 +492,7 @@ func runAgent(agent AgentConfig, prompt string) (string, error) {
 	return stripANSI(string(output)), nil
 }
 
-func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)) (string, error) {
+func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.Command(agent.Cmd, agent.Args...)
@@ -468,6 +514,10 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 
 	if err := cmd.Start(); err != nil {
 		return "", err
+	}
+
+	if runner != nil {
+		runner.setActiveCmd(cmd)
 	}
 
 	var output strings.Builder

@@ -1095,38 +1095,38 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 }
 
 func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program, runner *PipelineRunner) {
-	RunPipelineWithCallbacks(p,
-		func(stepIndex int, prompt string) {
+	RunPipelineWithOptions(p, RunOptions{
+		OnStart: func(stepIndex int, prompt string) {
 			if program != nil {
 				program.Send(stepStartMsg{index: stepIndex, prompt: prompt})
 			}
 		},
-		func(stepIndex int, output string) {
+		OnOutput: func(stepIndex int, output string) {
 			if program != nil {
 				program.Send(stepOutputMsg{index: stepIndex, output: output})
 			}
 		},
-		func(stepIndex int, duration time.Duration, err error) {
+		OnComplete: func(stepIndex int, duration time.Duration, err error) {
 			if program != nil {
 				program.Send(stepCompleteMsg{index: stepIndex, duration: duration, err: err})
 			}
 		},
-		func(stepIndex int, line string) {
+		OnStream: func(stepIndex int, line string) {
 			if program != nil {
 				program.Send(stepStreamMsg{index: stepIndex, line: line})
 			}
 		},
-		func(stepIndex int, changes []string) {
+		OnFileChanges: func(stepIndex int, changes []string) {
 			if program != nil {
 				program.Send(fileChangesMsg{index: stepIndex, changes: changes})
 			}
 		},
-		func(stepIndex int, attempt int, maxRetries int) {
+		OnRetry: func(stepIndex int, attempt int, maxRetries int) {
 			if program != nil {
 				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
 			}
 		},
-		runner,
-		resume,
-	)
+		Runner: runner,
+		Resume: resume,
+	})
 }

@@ -191,15 +191,36 @@ func (r *PipelineRunner) wasKilled() bool {
 	return r.killed
 }
 
+// RunOptions configures pipeline execution behavior and callbacks.
+type RunOptions struct {
+	OnStart       ProgressCallback
+	OnOutput      ProgressCallback
+	OnComplete    StepCallback
+	OnStream      StreamCallback
+	OnFileChanges FileChangesCallback
+	OnRetry       RetryCallback
+	Runner        *PipelineRunner
+	Resume        bool
+}
+
 func RunPipeline(p *Pipeline) error {
-	return RunPipelineWithResume(p, false)
+	return RunPipelineWithOptions(p, RunOptions{})
 }
 
 func RunPipelineWithResume(p *Pipeline, resume bool) error {
-	return RunPipelineWithCallbacks(p, nil, nil, nil, nil, nil, nil, nil, resume)
+	return RunPipelineWithOptions(p, RunOptions{Resume: resume})
 }
 
-func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, onRetry RetryCallback, runner *PipelineRunner, resume bool) error {
+func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
+	onStart := opts.OnStart
+	onOutput := opts.OnOutput
+	onComplete := opts.OnComplete
+	onStream := opts.OnStream
+	onFileChanges := opts.OnFileChanges
+	onRetry := opts.OnRetry
+	runner := opts.Runner
+	resume := opts.Resume
+
 	ctx := &PipelineContext{
 		Global:  p.Context,
 		Outputs: make(map[string]string),

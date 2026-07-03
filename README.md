@@ -2,9 +2,29 @@
 
 ![Octos](images/octos.png)
 
-Minimalist orchestrator that executes YAML pipelines with CLI agents (kiro-cli, claude-code, etc.)
+Minimalist orchestrator that executes YAML pipelines with **any CLI agent**. No adapters, no plugins — if it accepts a prompt and returns text to stdout, it works. Swap agents per-step, mix providers in the same pipeline, or use a shell script as your "agent".
 
 Automate multi-step LLM workflows with checkpoints, artifacts, and conditional execution.
+
+## 30-Second Quick Start
+
+```yaml
+# review.yaml
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools"]
+
+steps:
+  - name: review
+    prompt: "Review this codebase and suggest the top 3 improvements"
+```
+
+```bash
+brew install vicendominguez/tap/octos
+octos review.yaml
+```
+
+That's it. Replace `kiro-cli` with any CLI agent (`goose`, `claude`...) and it just works. See [full examples below](#examples).
 
 ## Installation
 
@@ -18,8 +38,8 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.8.2/octos_0.8.2_amd64.deb
-sudo dpkg -i octos_0.7.2_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v0.10.0/octos_0.10.0_amd64.deb
+sudo dpkg -i octos_0.10.0_amd64.deb
 ```
 
 ### From source

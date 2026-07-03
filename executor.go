@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -520,44 +521,38 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 		runner.setActiveCmd(cmd)
 	}
 
-	var output strings.Builder
+	var (
+		mu     sync.Mutex
+		output strings.Builder
+	)
+	writeLine := func(line string) {
+		mu.Lock()
+		output.WriteString(line + "\n")
+		mu.Unlock()
+		if onLine != nil {
+			onLine(line)
+		}
+	}
+
 	var wg sync.WaitGroup
-	scanner := bufio.NewScanner(stdout)
-
 	wg.Add(2)
-	go func() {
+	scan := func(r io.Reader) {
 		defer wg.Done()
-		for scanner.Scan() {
-			line := scanner.Text()
-			cleanLine := stripANSI(line)
-			output.WriteString(cleanLine + "\n")
-			if onLine != nil {
-				onLine(cleanLine)
-			}
+		s := bufio.NewScanner(r)
+		for s.Scan() {
+			writeLine(stripANSI(s.Text()))
 		}
-	}()
+	}
+	go scan(stdout)
+	go scan(stderr)
 
-	stderrScanner := bufio.NewScanner(stderr)
-	go func() {
-		defer wg.Done()
-		for stderrScanner.Scan() {
-			line := stderrScanner.Text()
-			cleanLine := stripANSI(line)
-			output.WriteString(cleanLine + "\n")
-			if onLine != nil {
-				onLine(cleanLine)
-			}
-		}
-	}()
-
-	// Wait for the process to finish — this closes pipes and unblocks scanners
 	cmdErr := cmd.Wait()
 	wg.Wait()
 
-	if cmdErr != nil {
-		return output.String(), cmdErr
-	}
+	mu.Lock()
+	result := output.String()
+	mu.Unlock()
 
-	return output.String(), nil
+	return result, cmdErr
 }
 

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -471,14 +472,20 @@ func interpolate(text string, ctx *Context) (string, []string) {
 	return result, warnings
 }
 
+func buildArgs(agent AgentConfig, prompt string) []string {
+	if agent.Stdin {
+		return agent.Args
+	}
+	return append(slices.Clone(agent.Args), prompt)
+}
+
 func runAgent(agent AgentConfig, prompt string, runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.Command(agent.Cmd, agent.Args...)
 		cmd.Stdin = strings.NewReader(prompt)
 	} else {
-		args := append(agent.Args, prompt)
-		cmd = exec.Command(agent.Cmd, args...)
+		cmd = exec.Command(agent.Cmd, buildArgs(agent, prompt)...)
 	}
 
 	if runner != nil {
@@ -499,8 +506,7 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 		cmd = exec.Command(agent.Cmd, agent.Args...)
 		cmd.Stdin = strings.NewReader(prompt)
 	} else {
-		args := append(agent.Args, prompt)
-		cmd = exec.Command(agent.Cmd, args...)
+		cmd = exec.Command(agent.Cmd, buildArgs(agent, prompt)...)
 	}
 
 	stdout, err := cmd.StdoutPipe()

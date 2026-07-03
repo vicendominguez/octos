@@ -540,10 +540,10 @@ func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *Pip
 func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
-		cmd = exec.Command(agent.Cmd, agent.Args...)
+		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
 		cmd.Stdin = strings.NewReader(prompt)
 	} else {
-		cmd = exec.Command(agent.Cmd, buildArgs(agent, prompt)...)
+		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -569,17 +569,6 @@ func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string
 	if runner != nil {
 		runner.setActiveCmd(cmd)
 	}
-
-	// Monitor context cancellation — kill process if ctx is done
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			cmd.Process.Kill()
-		case <-done:
-		}
-	}()
 
 	var (
 		mu     sync.Mutex

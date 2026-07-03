@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRunAgentWithStreamingNoRace(t *testing.T) {
@@ -37,5 +38,31 @@ func TestRunAgentWithStreamingNoRace(t *testing.T) {
 	mu.Unlock()
 	if lineCount < 4 {
 		t.Errorf("expected at least 4 streamed lines, got %d", lineCount)
+	}
+}
+
+func TestRunAgentWithStreamingContextCancel(t *testing.T) {
+	agent := AgentConfig{
+		Cmd:  "sh",
+		Args: []string{"-c", "sleep 10; echo done"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel after 100ms
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := runAgentWithStreaming(ctx, agent, "", nil, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("cancellation took too long: %v", elapsed)
 	}
 }

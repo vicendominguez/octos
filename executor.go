@@ -175,6 +175,13 @@ func (r *PipelineRunner) setActiveCmd(cmd *exec.Cmd) {
 	r.killed = false
 }
 
+// clearActiveCmd removes the reference to the finished command.
+func (r *PipelineRunner) clearActiveCmd() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.activeCmd = nil
+}
+
 // wasKilled returns true if the last process was killed via KillCurrentStep.
 func (r *PipelineRunner) wasKilled() bool {
 	r.mu.Lock()
@@ -491,6 +498,9 @@ func runAgent(agent AgentConfig, prompt string, runner *PipelineRunner) (string,
 	}
 
 	output, err := cmd.CombinedOutput()
+	if runner != nil {
+		runner.clearActiveCmd()
+	}
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, string(output))
 	}
@@ -557,6 +567,9 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 	go scan(stderr)
 
 	cmdErr := cmd.Wait()
+	if runner != nil {
+		runner.clearActiveCmd()
+	}
 	wg.Wait()
 
 	mu.Lock()

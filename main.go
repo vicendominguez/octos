@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -13,6 +14,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version")
 	resume := flag.Bool("resume", false, "Resume from last checkpoint")
 	clean := flag.Bool("clean", false, "Clean state and start fresh")
+	dryRun := flag.Bool("dry-run", false, "Validate pipeline without executing agents")
 	loop := flag.Int("loop", 0, "Number of times to run pipeline (0 = no loop, N = repeat N times)")
 	flag.Parse()
 
@@ -39,6 +41,13 @@ func main() {
 	pipeline, err := LoadPipeline(pipelineFile)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if *dryRun {
+		if err := DryRun(pipeline); err != nil {
+			os.Exit(1)
+		}
+		return
 	}
 
 	if *useTUI {

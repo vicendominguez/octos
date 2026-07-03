@@ -98,10 +98,13 @@ Pipeline demonstrating `stdin: true` for agents that read prompts from stdin:
 ./octos examples/example.yaml
 
 # Headless mode (CI/CD)
-./octos -no-tui examples/example.yaml
+./octos --tui=false examples/example.yaml
 
 # Resume from checkpoint
 ./octos --resume examples/example.yaml
+
+# Validate without running
+./octos --dry-run examples/example.yaml
 ```
 
 ## Creating Your Own Pipeline
@@ -110,4 +113,6 @@ Start with `example.yaml` and gradually add:
 1. Artifacts for large outputs
 2. Conditionals for decision points
 3. Context for shared configuration
-4. Multiple steps for complex workflows
+4. `on_failure: retry` for flaky steps
+5. `--dry-run` to validate before running
+6. Multiple steps for complex workflows

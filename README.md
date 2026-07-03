@@ -38,8 +38,8 @@ brew install octos
 ### Debian/Ubuntu
 
 ```bash
-wget https://github.com/vicendominguez/octos/releases/download/v0.10.0/octos_0.10.0_amd64.deb
-sudo dpkg -i octos_0.10.0_amd64.deb
+wget https://github.com/vicendominguez/octos/releases/download/v1.0.0/octos_1.0.0_amd64.deb
+sudo dpkg -i octos_1.0.0_amd64.deb
 ```
 
 ### From source
@@ -461,6 +461,8 @@ Options:
   --tui=false        Disable TUI (headless mode)
   --resume           Resume from last checkpoint
   --clean            Clear saved state before running
+  --dry-run          Validate pipeline without executing agents
+  --loop N           Run pipeline N times (Ralph loop pattern)
 ```
 
 ## Examples
@@ -509,3 +511,7 @@ steps:
   - name: implement    # Execute the plan
   - name: verify       # Check the results
 ```
+
+## License
+
+GPL-3.0

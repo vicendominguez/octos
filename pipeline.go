@@ -62,7 +62,7 @@ func LoadPipeline(path string) (*Pipeline, error) {
 
 	var p Pipeline
 	if err := yaml.Unmarshal([]byte(expanded), &p); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error: invalid YAML in %s: %w\n  hint: check indentation and quoting around the reported line", path, err)
 	}
 
 	p.File = path
@@ -77,7 +77,7 @@ func LoadPipeline(path string) (*Pipeline, error) {
 			}
 			content, err := os.ReadFile(promptPath)
 			if err != nil {
-				return nil, fmt.Errorf("step %d (%s): cannot read prompt_file %q: %w", i+1, step.Name, step.PromptFile, err)
+				return nil, fmt.Errorf("error: step '%s' references prompt_file '%s' which does not exist\n  hint: path is relative to pipeline YAML location (%s)", step.Name, step.PromptFile, pipelineDir)
 			}
 			p.Steps[i].Prompt = expandEnvWithDefaults(string(content))
 		}
@@ -100,25 +100,25 @@ func LoadPipeline(path string) (*Pipeline, error) {
 // Validate checks if the pipeline configuration is valid
 func (p *Pipeline) Validate() error {
 	if p.Agent.Cmd == "" {
-		return fmt.Errorf("agent.cmd is required")
+		return fmt.Errorf("error: agent.cmd is required\n  hint: add 'cmd: <agent-binary>' under 'agent:'")
 	}
 	
 	if len(p.Steps) == 0 {
-		return fmt.Errorf("at least one step is required")
+		return fmt.Errorf("error: at least one step is required\n  hint: add a 'steps:' section with at least one '- name:' entry")
 	}
 	
 	for i, step := range p.Steps {
 		if step.Name == "" {
-			return fmt.Errorf("step %d: name is required", i+1)
+			return fmt.Errorf("error: step %d has no name\n  hint: every step needs a unique 'name:' field", i+1)
 		}
 		if step.Prompt == "" {
-			return fmt.Errorf("step %d (%s): prompt or prompt_file is required", i+1, step.Name)
+			return fmt.Errorf("error: step '%s' has no prompt\n  hint: add 'prompt:' or 'prompt_file:' to the step", step.Name)
 		}
 		if step.OnFailure != "" && step.OnFailure != "retry" && step.OnFailure != "skip" && step.OnFailure != "fail_fast" {
-			return fmt.Errorf("step %d (%s): on_failure must be 'retry', 'skip', or 'fail_fast'", i+1, step.Name)
+			return fmt.Errorf("error: step '%s' has invalid on_failure value '%s'\n  hint: must be 'retry', 'skip', or 'fail_fast'", step.Name, step.OnFailure)
 		}
 		if step.MaxRetries > 0 && step.OnFailure != "retry" {
-			return fmt.Errorf("step %d (%s): max_retries requires on_failure: retry", i+1, step.Name)
+			return fmt.Errorf("error: step '%s' has max_retries without on_failure: retry\n  hint: add 'on_failure: retry' or remove 'max_retries'", step.Name)
 		}
 	}
 	

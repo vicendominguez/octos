@@ -184,6 +184,14 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		step := p.Steps[i]
 
 		// Check condition
+		if step.When != "" && !isValidConditionSyntax(step.When) {
+			msg := fmt.Sprintf("warning: step '%s' has unparseable 'when' condition: '%s'\n  hint: supported: 'X contains Y', 'X equals Y', 'X not_empty'", step.Name, step.When)
+			if onStream != nil {
+				onStream(i, msg)
+			} else if !silent {
+				fmt.Fprintln(os.Stderr, msg)
+			}
+		}
 		if !evaluateCondition(step.When, ctx.Outputs, artifacts) {
 			if !silent {
 				fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
@@ -195,8 +203,11 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 		if step.LoadFrom != "" {
 			content, err := loadArtifact(step.LoadFrom)
 			if err != nil {
-				if !silent {
-					fmt.Printf("⚠ Warning: could not load artifact %s: %v\n", step.LoadFrom, err)
+				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in .octos/artifacts/)\n  hint: was the producing step skipped or is this the first run?", step.Name, step.LoadFrom)
+				if onStream != nil {
+					onStream(i, msg)
+				} else if !silent {
+					fmt.Fprintln(os.Stderr, msg)
 				}
 			} else {
 				artifactName := strings.TrimSuffix(step.LoadFrom, filepath.Ext(step.LoadFrom))
@@ -309,7 +320,7 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 				if onComplete != nil {
 					onComplete(i, duration, err)
 				}
-				return fmt.Errorf("step %s failed: %w", step.Name, err)
+				return fmt.Errorf("error: step '%s' failed (duration %s)\n  agent: %s %v\n  cause: %w", step.Name, duration.Round(time.Millisecond), agent.Cmd, agent.Args, err)
 			}
 		}
 
@@ -406,7 +417,7 @@ func interpolate(text string, ctx *Context) (string, []string) {
 	// Collect unresolved placeholders as warnings
 	if matches := unresolvedPlaceholderRegex.FindAllString(result, -1); len(matches) > 0 {
 		for _, m := range matches {
-			warnings = append(warnings, fmt.Sprintf("⚠ unresolved placeholder: %s", m))
+			warnings = append(warnings, fmt.Sprintf("warning: unresolved placeholder %s\n  hint: check spelling or ensure the referenced step runs before this one", m))
 		}
 	}
 

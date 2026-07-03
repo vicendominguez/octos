@@ -54,7 +54,9 @@ func evaluateCondition(condition string, outputs map[string]string, artifacts ma
 		}
 	}
 	if cond == "not_empty" || strings.HasSuffix(cond, " not_empty") {
-		return strings.TrimSpace(cond) != "" && cond != "not_empty"
+		value := strings.TrimSuffix(cond, " not_empty")
+		value = strings.TrimSpace(value)
+		return value != ""
 	}
 
 	return true

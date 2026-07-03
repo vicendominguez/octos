@@ -148,16 +148,17 @@ type ProgressCallback func(stepIndex int, output string)
 type StepCallback func(stepIndex int, duration time.Duration, err error)
 type StreamCallback func(stepIndex int, line string)
 type FileChangesCallback func(stepIndex int, changes []string)
+type RetryCallback func(stepIndex int, attempt int, maxRetries int)
 
 func RunPipeline(p *Pipeline) error {
 	return RunPipelineWithResume(p, false)
 }
 
 func RunPipelineWithResume(p *Pipeline, resume bool) error {
-	return RunPipelineWithCallbacks(p, nil, nil, nil, nil, nil, resume)
+	return RunPipelineWithCallbacks(p, nil, nil, nil, nil, nil, nil, resume)
 }
 
-func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, resume bool) error {
+func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, onComplete StepCallback, onStream StreamCallback, onFileChanges FileChangesCallback, onRetry RetryCallback, resume bool) error {
 	ctx := &Context{
 		Global:  p.Context,
 		Outputs: make(map[string]string),
@@ -281,6 +282,9 @@ func RunPipelineWithCallbacks(p *Pipeline, onStart, onOutput ProgressCallback, o
 			if onFailure == "retry" && attempts <= maxRetries {
 				if !silent {
 					fmt.Printf("⚠ Step %s failed (attempt %d/%d), retrying...\n", step.Name, attempts, maxRetries+1)
+				}
+				if onRetry != nil {
+					onRetry(i, attempts, maxRetries+1)
 				}
 				if onStream != nil {
 					onStream(i, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))

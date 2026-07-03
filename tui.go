@@ -52,13 +52,15 @@ const (
 )
 
 type StepState struct {
-	Name      string
-	Status    StepStatus
-	Duration  time.Duration
-	StartTime time.Time
-	Output    string
-	Error     error
-	Prompt    string
+	Name         string
+	Status       StepStatus
+	Duration     time.Duration
+	StartTime    time.Time
+	Output       string
+	Error        error
+	Prompt       string
+	RetryAttempt int
+	MaxRetries   int
 }
 
 type FocusedPanel int
@@ -108,6 +110,11 @@ type stepOutputMsg struct {
 type stepStreamMsg struct {
 	index int
 	line  string
+}
+type stepRetryMsg struct {
+	index      int
+	attempt    int
+	maxRetries int
 }
 type stepCompleteMsg struct {
 	index    int
@@ -257,6 +264,14 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case stepRetryMsg:
+		if m.isValidStepIndex(msg.index) {
+			m.steps[msg.index].RetryAttempt = msg.attempt
+			m.steps[msg.index].MaxRetries = msg.maxRetries
+			m.statusMsg = fmt.Sprintf("Step %s: retry %d/%d", m.steps[msg.index].Name, msg.attempt, msg.maxRetries)
+		}
+		return m, nil
+
 	case fileChangesMsg:
 		if m.isValidStepIndex(msg.index) {
 			m.filesChanged = append(m.filesChanged, msg.changes...)
@@ -381,6 +396,10 @@ func (m *TUIModel) buildStepsView(showTitle bool, showDuration bool) string {
 		stepStyle := GetStepStatusStyle(step.Status)
 		
 		line := fmt.Sprintf("%s %s", icon, step.Name)
+		if step.Status == StatusRunning && step.RetryAttempt > 0 {
+			retryInfo := yellowStyle.Render(fmt.Sprintf("(retry %d/%d)", step.RetryAttempt, step.MaxRetries))
+			line = fmt.Sprintf("%s %s %s", icon, step.Name, retryInfo)
+		}
 		if showDuration && step.Status == StatusCompleted {
 			duration := fmt.Sprintf("%.1fs", step.Duration.Seconds())
 			line = stepStyle.Render(line) + " " + statsStyle.Render(duration)
@@ -1078,6 +1097,11 @@ func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program) {
 		func(stepIndex int, changes []string) {
 			if program != nil {
 				program.Send(fileChangesMsg{index: stepIndex, changes: changes})
+			}
+		},
+		func(stepIndex int, attempt int, maxRetries int) {
+			if program != nil {
+				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
 			}
 		},
 		resume,

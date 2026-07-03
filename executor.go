@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -398,9 +399,12 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 	}
 
 	var output strings.Builder
+	var wg sync.WaitGroup
 	scanner := bufio.NewScanner(stdout)
 
+	wg.Add(2)
 	go func() {
+		defer wg.Done()
 		for scanner.Scan() {
 			line := scanner.Text()
 			cleanLine := stripANSI(line)
@@ -411,9 +415,9 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 		}
 	}()
 
-	// Also capture stderr
 	stderrScanner := bufio.NewScanner(stderr)
 	go func() {
+		defer wg.Done()
 		for stderrScanner.Scan() {
 			line := stderrScanner.Text()
 			cleanLine := stripANSI(line)
@@ -424,6 +428,7 @@ func runAgentWithStreaming(agent AgentConfig, prompt string, onLine func(string)
 		}
 	}()
 
+	wg.Wait()
 	if err := cmd.Wait(); err != nil {
 		return output.String(), err
 	}

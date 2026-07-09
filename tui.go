@@ -93,6 +93,7 @@ type TUIModel struct {
 	statusMsg      string
 	workingDir     string
 	gitBranch      string
+	hasGit         bool
 	userScrolling  bool
 	showPrompt     bool
 	focusedPanel   FocusedPanel
@@ -169,6 +170,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 		startTime:   time.Now(),
 		resuming:    resume,
 		workingDir:  workingDir,
+		hasGit:      exec.Command("git", "--version").Run() == nil,
 		maxLoops:    0,
 		currentLoop: 1,
 		runner:      &PipelineRunner{},
@@ -452,6 +454,9 @@ func (m *TUIModel) isValidStepIndex(index int) bool {
 
 // refreshGitBranch updates the displayed git branch from the working directory.
 func (m *TUIModel) refreshGitBranch() {
+	if !m.hasGit {
+		return
+	}
 	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
 		m.gitBranch = strings.TrimSpace(string(out))
 	}

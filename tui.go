@@ -49,6 +49,7 @@ const (
 	StatusRunning
 	StatusCompleted
 	StatusFailed
+	StatusSkipped
 )
 
 type StepState struct {
@@ -122,6 +123,10 @@ type stepCompleteMsg struct {
 	duration time.Duration
 	err      error
 }
+type stepSkipMsg struct {
+	index int
+}
+type pipelineDoneMsg struct{}
 type fileChangesMsg struct {
 	index   int
 	changes []string
@@ -297,19 +302,32 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.steps[msg.index].Status = StatusCompleted
 				m.statusMsg = fmt.Sprintf("Step %d/%d completed in %.1fs", msg.index+1, len(m.steps), msg.duration.Seconds())
 			}
+		}
+		return m, nil
 
-			if msg.index == len(m.steps)-1 {
-				// Pipeline ended
-				m.pipelineEnded = true
-				m.endTime = time.Now()
-				m.selectedStep = msg.index
+	case stepSkipMsg:
+		if m.isValidStepIndex(msg.index) {
+			m.steps[msg.index].Status = StatusSkipped
+		}
+		return m, nil
 
-				// Auto-restart if loop mode is active and loops remaining
-				if m.maxLoops > 0 && m.currentLoop < m.maxLoops {
-					return m.restartPipeline()
+	case pipelineDoneMsg:
+		if !m.pipelineEnded {
+			m.pipelineEnded = true
+			m.endTime = time.Now()
+			// Find last non-skipped step to select
+			m.selectedStep = 0
+			for i := len(m.steps) - 1; i >= 0; i-- {
+				if m.steps[i].Status == StatusCompleted || m.steps[i].Status == StatusFailed {
+					m.selectedStep = i
+					break
 				}
-				m.statusMsg = "Pipeline completed! Use ↑↓/jk to navigate steps"
 			}
+			// Auto-restart if loop mode is active and loops remaining
+			if m.maxLoops > 0 && m.currentLoop < m.maxLoops {
+				return m.restartPipeline()
+			}
+			m.statusMsg = "Pipeline completed! Use ↑↓/jk to navigate steps"
 		}
 		return m, nil
 	}
@@ -373,7 +391,7 @@ func (m *TUIModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *TUIModel) countCompletedSteps() int {
 	completed := 0
 	for _, step := range m.steps {
-		if step.Status == StatusCompleted {
+		if step.Status == StatusCompleted || step.Status == StatusSkipped {
 			completed++
 		}
 	}
@@ -1124,6 +1142,16 @@ func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program, runn
 		OnRetry: func(stepIndex int, attempt int, maxRetries int) {
 			if program != nil {
 				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
+			}
+		},
+		OnSkip: func(stepIndex int) {
+			if program != nil {
+				program.Send(stepSkipMsg{index: stepIndex})
+			}
+		},
+		OnDone: func() {
+			if program != nil {
+				program.Send(pipelineDoneMsg{})
 			}
 		},
 		Runner: runner,

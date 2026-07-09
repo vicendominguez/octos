@@ -202,6 +202,8 @@ type RunOptions struct {
 	OnStream      StreamCallback
 	OnFileChanges FileChangesCallback
 	OnRetry       RetryCallback
+	OnSkip        func(stepIndex int)
+	OnDone        func()
 	Runner        *PipelineRunner
 	Resume        bool
 }
@@ -225,6 +227,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	onStream := opts.OnStream
 	onFileChanges := opts.OnFileChanges
 	onRetry := opts.OnRetry
+	onSkip := opts.OnSkip
+	onDone := opts.OnDone
 	runner := opts.Runner
 	resume := opts.Resume
 
@@ -265,6 +269,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		if !evaluateCondition(step.When, ctx.Outputs, artifacts) {
 			if !silent {
 				fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
+			}
+			if onSkip != nil {
+				onSkip(i)
 			}
 			continue
 		}
@@ -403,6 +410,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 				if onComplete != nil {
 					onComplete(i, duration, err)
 				}
+				if onDone != nil {
+					onDone()
+				}
 				return fmt.Errorf("error: step '%s' failed (duration %s)\n  agent: %s %v\n  cause: %w", step.Name, duration.Round(time.Millisecond), agent.Cmd, agent.Args, err)
 			}
 		}
@@ -450,6 +460,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 	// Clear state on completion
 	ClearState(p.File)
+	if onDone != nil {
+		onDone()
+	}
 	return nil
 }
 

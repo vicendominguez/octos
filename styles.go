@@ -92,6 +92,8 @@ func GetStepStatusStyle(status StepStatus) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(neonGreen).Bold(true)
 	case StatusFailed:
 		return lipgloss.NewStyle().Foreground(neonRed).Bold(true)
+	case StatusSkipped:
+		return lipgloss.NewStyle().Foreground(mutedGray).Italic(true)
 	default:
 		return lipgloss.NewStyle()
 	}
@@ -108,6 +110,8 @@ func GetStepIcon(status StepStatus) string {
 		return "✓"
 	case StatusFailed:
 		return "✗"
+	case StatusSkipped:
+		return "⊘"
 	default:
 		return "?"
 	}

@@ -83,7 +83,7 @@ Octos supports the **Ralph Wiggum loop** pattern - running your pipeline multipl
 ## TUI Features
 
 **Cyberpunk-themed dashboard** with real-time updates:
-- 📋 **Steps Panel**: Visual progress with status indicators (⏳ → ✓ → ✗), retry counter in yellow
+- 📋 **Steps Panel**: Visual progress with status indicators (⏳ → ✓ → ✗ → ⊘ skipped), retry counter in yellow
 - 📺 **Output Panel**: Live streaming output from current step
 - 📁 **File Changes**: Real-time tracking of modified/created/deleted files
 - ⚡ **Stats Bar**: Elapsed time, steps/min speed, completion rate

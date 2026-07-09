@@ -162,24 +162,20 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 	wd, _ := os.Getwd()
 	workingDir := filepath.Base(wd)
 
-	// Get git branch (silent fail if not a repo)
-	gitBranch := ""
-	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
-		gitBranch = strings.TrimSpace(string(out))
-	}
-
-	return TUIModel{
+	m := TUIModel{
 		pipeline:    p,
 		steps:       steps,
 		progress:    prog,
 		startTime:   time.Now(),
 		resuming:    resume,
 		workingDir:  workingDir,
-		gitBranch:   gitBranch,
 		maxLoops:    0,
 		currentLoop: 1,
 		runner:      &PipelineRunner{},
 	}
+	m.refreshGitBranch()
+
+	return m
 }
 
 func (m *TUIModel) Init() tea.Cmd {
@@ -302,6 +298,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.steps[msg.index].Status = StatusCompleted
 				m.statusMsg = fmt.Sprintf("Step %d/%d completed in %.1fs", msg.index+1, len(m.steps), msg.duration.Seconds())
 			}
+			m.refreshGitBranch()
 		}
 		return m, nil
 
@@ -451,6 +448,13 @@ func (m *TUIModel) buildStepsView(showTitle bool, showDuration bool) string {
 
 func (m *TUIModel) isValidStepIndex(index int) bool {
 	return index >= 0 && index < len(m.steps)
+}
+
+// refreshGitBranch updates the displayed git branch from the working directory.
+func (m *TUIModel) refreshGitBranch() {
+	if out, err := exec.Command("git", "branch", "--show-current").Output(); err == nil {
+		m.gitBranch = strings.TrimSpace(string(out))
+	}
 }
 
 func (m *TUIModel) getDisplayStep() int {

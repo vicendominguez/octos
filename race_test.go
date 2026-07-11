@@ -22,7 +22,7 @@ func TestRunAgentWithStreamingNoRace(t *testing.T) {
 		mu.Lock()
 		lines = append(lines, line)
 		mu.Unlock()
-	}, nil)
+	}, nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestRunAgentWithStreamingContextCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	_, err := runAgentWithStreaming(ctx, agent, "", nil, nil)
+	_, err := runAgentWithStreaming(ctx, agent, "", nil, nil, 0)
 	elapsed := time.Since(start)
 
 	if err == nil {

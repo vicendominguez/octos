@@ -156,7 +156,7 @@ type RetryCallback func(stepIndex int, attempt int, maxRetries int)
 
 // PipelineRunner manages pipeline execution and exposes control over the active agent process.
 type PipelineRunner struct {
-	activeCmds map[int]*exec.Cmd
+	activeCmds  map[int]*exec.Cmd
 	killedSteps map[int]bool
 	mu          sync.Mutex
 }
@@ -174,36 +174,8 @@ func (r *PipelineRunner) KillStep(index int) {
 	}
 }
 
-// KillCurrentStep kills all currently running steps (backward compat for single-step mode).
-func (r *PipelineRunner) KillCurrentStep() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.killedSteps == nil {
-		r.killedSteps = make(map[int]bool)
-	}
-	for idx, cmd := range r.activeCmds {
-		r.killedSteps[idx] = true
-		if cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-	}
-	// Also set legacy index -1 for backward compat
-	r.killedSteps[-1] = true
-}
-
 // setActiveCmd stores the command for a specific step index.
-func (r *PipelineRunner) setActiveCmd(cmd *exec.Cmd) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	// Legacy: store with index -1 for non-parallel mode
-	if r.activeCmds == nil {
-		r.activeCmds = make(map[int]*exec.Cmd)
-	}
-	r.activeCmds[-1] = cmd
-}
-
-// setActiveCmdForStep stores the command for a specific step index.
-func (r *PipelineRunner) setActiveCmdForStep(index int, cmd *exec.Cmd) {
+func (r *PipelineRunner) setActiveCmd(index int, cmd *exec.Cmd) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.activeCmds == nil {
@@ -212,34 +184,15 @@ func (r *PipelineRunner) setActiveCmdForStep(index int, cmd *exec.Cmd) {
 	r.activeCmds[index] = cmd
 }
 
-// clearActiveCmd removes the reference for legacy single-step mode.
-func (r *PipelineRunner) clearActiveCmd() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.activeCmds, -1)
-}
-
-// clearActiveCmdForStep removes the reference for a specific step.
-func (r *PipelineRunner) clearActiveCmdForStep(index int) {
+// clearActiveCmd removes the reference for a specific step.
+func (r *PipelineRunner) clearActiveCmd(index int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.activeCmds, index)
 }
 
-// consumeKilled reports whether a manual kill was requested and resets the flag (legacy).
-func (r *PipelineRunner) consumeKilled() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.killedSteps == nil {
-		return false
-	}
-	k := r.killedSteps[-1]
-	delete(r.killedSteps, -1)
-	return k
-}
-
-// consumeKilledForStep reports whether a manual kill was requested for a specific step.
-func (r *PipelineRunner) consumeKilledForStep(index int) bool {
+// consumeKilled reports whether a manual kill was requested for a specific step and resets the flag.
+func (r *PipelineRunner) consumeKilled(index int) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.killedSteps == nil {
@@ -414,9 +367,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			if onStream != nil {
 				output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
 					onStream(i, line)
-				}, runner)
+				}, runner, i)
 			} else {
-				output, err = runAgent(runCtx, agent, retryPrompt, runner)
+				output, err = runAgent(runCtx, agent, retryPrompt, runner, i)
 			}
 
 			if err == nil {
@@ -424,7 +377,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			}
 
 			// If killed via R key (manual retry), restart immediately
-			if runner != nil && runner.consumeKilled() {
+			if runner != nil && runner.consumeKilled(i) {
 				if onStream != nil {
 					onStream(i, "⟳ Manual retry requested — restarting step...")
 				}
@@ -675,18 +628,18 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					for {
 						attempts++
 						if onStream != nil {
-							output, err = runAgentWithStreamingForStep(runCtx, agent, retryPrompt, func(line string) {
+							output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
 								onStream(idx, line)
 							}, runner, idx)
 						} else {
-							output, err = runAgentForStep(runCtx, agent, retryPrompt, runner, idx)
+							output, err = runAgent(runCtx, agent, retryPrompt, runner, idx)
 						}
 
 						if err == nil {
 							break
 						}
 
-						if runner != nil && runner.consumeKilledForStep(idx) {
+						if runner != nil && runner.consumeKilled(idx) {
 							if onStream != nil {
 								onStream(idx, "⟳ Manual retry requested — restarting step...")
 							}
@@ -859,18 +812,18 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	for {
 		attempts++
 		if onStream != nil {
-			output, err = runAgentWithStreamingForStep(runCtx, agent, retryPrompt, func(line string) {
+			output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
 				onStream(i, line)
 			}, runner, i)
 		} else {
-			output, err = runAgentForStep(runCtx, agent, retryPrompt, runner, i)
+			output, err = runAgent(runCtx, agent, retryPrompt, runner, i)
 		}
 
 		if err == nil {
 			break
 		}
 
-		if runner != nil && runner.consumeKilledForStep(i) {
+		if runner != nil && runner.consumeKilled(i) {
 			if onStream != nil {
 				onStream(i, "⟳ Manual retry requested — restarting step...")
 			}
@@ -1005,7 +958,7 @@ func buildArgs(agent AgentConfig, prompt string) []string {
 	return append(slices.Clone(agent.Args), prompt)
 }
 
-func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner) (string, error) {
+func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner, stepIdx int) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
@@ -1015,12 +968,12 @@ func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *Pip
 	}
 
 	if runner != nil {
-		runner.setActiveCmd(cmd)
+		runner.setActiveCmd(stepIdx, cmd)
 	}
 
 	output, err := cmd.CombinedOutput()
 	if runner != nil {
-		runner.clearActiveCmd()
+		runner.clearActiveCmd(stepIdx)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, string(output))
@@ -1029,7 +982,7 @@ func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *Pip
 	return stripANSI(string(output)), nil
 }
 
-func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner) (string, error) {
+func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner, stepIdx int) (string, error) {
 	var cmd *exec.Cmd
 	if agent.Stdin {
 		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
@@ -1059,7 +1012,7 @@ func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string
 	}
 
 	if runner != nil {
-		runner.setActiveCmd(cmd)
+		runner.setActiveCmd(stepIdx, cmd)
 	}
 
 	var (
@@ -1089,103 +1042,7 @@ func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string
 
 	cmdErr := cmd.Wait()
 	if runner != nil {
-		runner.clearActiveCmd()
-	}
-	wg.Wait()
-
-	mu.Lock()
-	result := output.String()
-	mu.Unlock()
-
-	return result, cmdErr
-}
-
-
-// runAgentForStep is like runAgent but tracks the command per step index.
-func runAgentForStep(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner, stepIdx int) (string, error) {
-	var cmd *exec.Cmd
-	if agent.Stdin {
-		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
-		cmd.Stdin = strings.NewReader(prompt)
-	} else {
-		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
-	}
-
-	if runner != nil {
-		runner.setActiveCmdForStep(stepIdx, cmd)
-	}
-
-	output, err := cmd.CombinedOutput()
-	if runner != nil {
-		runner.clearActiveCmdForStep(stepIdx)
-	}
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, string(output))
-	}
-
-	return stripANSI(string(output)), nil
-}
-
-// runAgentWithStreamingForStep is like runAgentWithStreaming but tracks per step index.
-func runAgentWithStreamingForStep(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner, stepIdx int) (string, error) {
-	var cmd *exec.Cmd
-	if agent.Stdin {
-		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
-		cmd.Stdin = strings.NewReader(prompt)
-	} else {
-		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-
-	if runner != nil {
-		detachFromTerminal(cmd)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	if runner != nil {
-		runner.setActiveCmdForStep(stepIdx, cmd)
-	}
-
-	var (
-		mu     sync.Mutex
-		output strings.Builder
-	)
-	writeLine := func(line string) {
-		mu.Lock()
-		output.WriteString(line + "\n")
-		mu.Unlock()
-		if onLine != nil {
-			onLine(line)
-		}
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	scan := func(r io.Reader) {
-		defer wg.Done()
-		s := bufio.NewScanner(r)
-		for s.Scan() {
-			writeLine(stripANSI(s.Text()))
-		}
-	}
-	go scan(stdout)
-	go scan(stderr)
-
-	cmdErr := cmd.Wait()
-	if runner != nil {
-		runner.clearActiveCmdForStep(stepIdx)
+		runner.clearActiveCmd(stepIdx)
 	}
 	wg.Wait()
 

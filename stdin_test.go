@@ -15,7 +15,7 @@ func TestRunAgentWithStdin(t *testing.T) {
 		Stdin: true,
 	}
 
-	output, err := runAgent(context.Background(), agent, "hello from stdin", nil)
+	output, err := runAgent(context.Background(), agent, "hello from stdin", nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRunAgentWithoutStdin(t *testing.T) {
 		Stdin: false,
 	}
 
-	output, err := runAgent(context.Background(), agent, "the prompt", nil)
+	output, err := runAgent(context.Background(), agent, "the prompt", nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestRunAgentWithStreamingStdin(t *testing.T) {
 	var lines []string
 	output, err := runAgentWithStreaming(context.Background(), agent, "line1\nline2\nline3", func(line string) {
 		lines = append(lines, line)
-	}, nil)
+	}, nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestRunAgentWithStreamingNoStdin(t *testing.T) {
 	var lines []string
 	output, err := runAgentWithStreaming(context.Background(), agent, "hello streaming", func(line string) {
 		lines = append(lines, line)
-	}, nil)
+	}, nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestStdinWithLargePrompt(t *testing.T) {
 	// Generate a 200KB prompt (would exceed ARG_MAX per-argument limits)
 	largePrompt := strings.Repeat("x", 200*1024)
 
-	output, err := runAgent(context.Background(), agent, largePrompt, nil)
+	output, err := runAgent(context.Background(), agent, largePrompt, nil, 0)
 	if err != nil {
 		t.Fatalf("unexpected error with large prompt: %v", err)
 	}

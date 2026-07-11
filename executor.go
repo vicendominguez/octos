@@ -900,12 +900,15 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 func buildPrompt(ctx *PipelineContext, newTask string) string {
 	var buf bytes.Buffer
 
-	buf.WriteString("=== CONTEXTO GLOBAL ===\n")
-	for k, v := range ctx.Global {
-		buf.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+	if len(ctx.Global) > 0 {
+		buf.WriteString("=== CONTEXT ===\n")
+		for k, v := range ctx.Global {
+			buf.WriteString(fmt.Sprintf("%s: %v\n", k, v))
+		}
+		buf.WriteString("\n")
 	}
 
-	buf.WriteString("\n=== NUEVA TAREA ===\n")
+	buf.WriteString("=== TASK ===\n")
 	buf.WriteString(newTask)
 
 	return buf.String()

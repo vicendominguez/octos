@@ -1,0 +1,55 @@
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools"]
+
+context:
+  role: "Senior developer working on stocker-mcp"
+  repo: "http://pluto:3000/quasar/stocker-mcp"
+  rules:
+    - "Don't break existing tests"
+    - "Keep changes minimal and focused"
+    - "One concern per fix"
+
+steps:
+  - name: analyze
+    prompt: |
+      Analyze this codebase and identify the top 3 issues or concerns.
+      For each one, describe:
+      1. What the problem is
+      2. Where it is (file and line if possible)
+      3. Severity (high/medium/low)
+    save_to: analysis.txt
+
+  - name: fix-issue-1
+    needs: [analyze]
+    load_from: analysis.txt
+    prompt: |
+      Fix the FIRST issue from this analysis:
+      {{artifact.analysis}}
+
+      Apply the fix directly. Keep it minimal.
+
+  - name: fix-issue-2
+    needs: [analyze]
+    load_from: analysis.txt
+    prompt: |
+      Fix the SECOND issue from this analysis:
+      {{artifact.analysis}}
+
+      Apply the fix directly. Keep it minimal.
+
+  - name: fix-issue-3
+    needs: [analyze]
+    load_from: analysis.txt
+    prompt: |
+      Fix the THIRD issue from this analysis:
+      {{artifact.analysis}}
+
+      Apply the fix directly. Keep it minimal.
+
+  - name: verify
+    needs: [fix-issue-1, fix-issue-2, fix-issue-3]
+    prompt: |
+      Run the tests and verify all fixes are correct.
+      If something broke, fix it.
+      Summarize what was changed.

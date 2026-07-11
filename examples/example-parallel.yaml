@@ -1,0 +1,94 @@
+# Example: Parallel analysis with dependency graph
+#
+# Demonstrates:
+#   - Parallel execution via `needs` (steps without shared deps run simultaneously)
+#   - Multi-artifact loading (`load_from` as list)
+#   - DAG visualization with `g` key in TUI
+#   - Conditional execution based on parallel outputs
+#
+# Dependency graph:
+#   analyze-code ──┐
+#                  ├── plan ── implement ── verify
+#   analyze-tests ─┘
+#
+# Usage: octos examples/example-parallel.yaml
+
+agent:
+  cmd: "kiro-cli"
+  args: ["chat", "--no-interactive", "--trust-all-tools"]
+
+context:
+  rules:
+    - "Keep changes minimal and focused"
+    - "Write tests for new code"
+    - "Follow existing code style"
+
+steps:
+  # ─── These two run in PARALLEL (no shared dependencies) ──────────────
+
+  - name: analyze-code
+    prompt: |
+      Analyze the source code in this directory:
+      - List main modules and their responsibilities
+      - Identify code smells (long functions, duplication, complexity)
+      - Note any missing error handling
+
+      Output max 30 lines. Be specific with file:line references.
+    save_to: code-analysis.txt
+
+  - name: analyze-tests
+    prompt: |
+      Analyze the test coverage in this directory:
+      - Which packages have tests? Which don't?
+      - Are there integration tests?
+      - What's the overall test quality?
+
+      Output max 20 lines. Be specific.
+    save_to: test-analysis.txt
+
+  # ─── Plan needs BOTH analyses (waits for parallel phase) ─────────────
+
+  - name: plan
+    needs: ["analyze-code", "analyze-tests"]
+    load_from:
+      - code-analysis.txt
+      - test-analysis.txt
+    prompt: |
+      Code analysis:
+      {{artifact.code-analysis}}
+
+      Test analysis:
+      {{artifact.test-analysis}}
+
+      Create a prioritized improvement plan:
+      1. High priority: bugs or missing error handling
+      2. Medium: code smells that affect maintainability
+      3. Low: style improvements
+
+      Output the plan as a numbered list. Max 3 items per priority.
+    save_to: plan.txt
+
+  # ─── Sequential from here ────────────────────────────────────────────
+
+  - name: implement
+    needs: ["plan"]
+    load_from: plan.txt
+    prompt: |
+      Implement ONLY the high-priority items from:
+      {{artifact.plan}}
+
+      Rules: {{context.rules}}
+
+      Make the changes and run tests to verify nothing breaks.
+    on_failure: retry
+    max_retries: 1
+
+  - name: verify
+    needs: ["implement"]
+    prompt: |
+      Verify the changes just made:
+      1. Run tests: confirm they pass
+      2. Check no unrelated files were modified
+      3. Confirm the high-priority issues are resolved
+
+      Output last line: VERIFIED or ISSUES_FOUND

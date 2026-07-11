@@ -1,185 +1,166 @@
-# Automated issue resolver: picks open Gitea issues, analyzes, implements,
-# validates, and creates merge requests. Uses labels as state machine.
+# Automated issue resolver: picks open issues, analyzes, implements,
+# validates, and creates merge requests.
 #
 # Designed for ralph loop: `octos --loop 0 gitea-issue-to-mr.yaml`
 # Each iteration picks one issue and works it to completion.
+#
+# Features:
+#   - Parallel discovery (issue + codebase scan run simultaneously)
+#   - Multi-artifact loading for minimal token usage
+#   - Retry on flaky steps, skip on non-critical failures
 #
 # Requirements:
 #   - GITEA_URL and GITEA_TOKEN env vars
 #   - Repo must exist with open issues
 #
 # Label lifecycle: (none) → in-progress → in-review
-# If validation fails, the loop re-reads the issue (with comments) and retries.
 
 agent:
   cmd: "kiro-cli"
   args: ["chat", "--no-interactive", "--trust-all-tools"]
 
 context:
-  role: "Senior software engineer working on issue resolution"
   gitea_url: "${GITEA_URL}"
   gitea_token: "${GITEA_TOKEN}"
-  gitea_owner: "your-user"
-  repo: "your-repo"
-  language: "Go"
+  gitea_owner: "${GITEA_OWNER:-your-user}"
+  repo: "${REPO:-your-repo}"
+  language: "${LANGUAGE:-Go}"
   rules:
-    - "KISS: Keep It Simple Stupid"
-    - "YAGNI: You Ain't Gonna Need It"
+    - "KISS & YAGNI"
     - "Small, focused commits"
     - "Write tests for new/changed code"
-    - "Use latest stable versions of dependencies"
     - "Do not break existing functionality"
 
 steps:
+  # ─── PHASE 1: Parallel discovery ─────────────────────────────────────
+  # pick-issue and scan-codebase have no needs → run in parallel
+
   - name: pick-issue
     prompt: |
-      Find an open issue to work on in Gitea.
+      Find the next open issue to work on.
 
       GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues?state=open&type=issues&limit=50&sort=oldest
-      Auth: -H "Authorization: token {{context.gitea_token}}"
+      Authorization: token {{context.gitea_token}}
 
-      Priority order:
-      1. First, pick any issue with label "in-progress" (resuming previous work)
-      2. If none, pick the oldest issue that has NONE of these labels: "in-progress", "in-review"
+      Priority:
+      1. Any issue with label "in-progress" (resuming previous work)
+      2. Oldest issue without "in-progress" or "in-review" labels
 
-      If no issue is found, output exactly: NO_ISSUES_FOUND
+      If none found, output exactly: NO_ISSUES_FOUND
 
       If found:
-      1. Ensure the "in-progress" label exists (create if not, color "#fbca04")
-      2. Add "in-progress" label if not already there:
-         POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues/{number}/labels
-         Body: {"labels": [<id of "in-progress" label>]}
-      3. Fetch all comments on the issue:
-         GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues/{number}/comments
-         Auth: -H "Authorization: token {{context.gitea_token}}"
+      - Add "in-progress" label (create if missing, color #fbca04)
+      - Fetch all comments on the issue
 
-      Output the issue number, title, body, existing labels, AND all comments (author + body for each). Nothing else.
+      Output ONLY: issue number, title, body, labels, and comments.
     save_to: current-issue.txt
 
-  - name: analyze-issue
-    when: "{{pick-issue.output}} not_empty"
-    load_from: current-issue.txt
+  - name: scan-codebase
     prompt: |
-      You are working on this issue:
-      {{artifact.current-issue}}
+      Scan the project structure concisely:
+      - List packages/modules and their purpose (one line each)
+      - Note test framework and coverage approach
+      - Note build system and CI config
 
-      The repo is cloned in the current directory. Read the relevant source files mentioned in the issue.
-      If not cloned yet, clone it:
-      git clone {{context.gitea_url}}/{{context.gitea_owner}}/{{context.repo}}.git . 2>/dev/null || git pull
+      Output max 20 lines. No code, no suggestions.
+    save_to: codebase-map.txt
 
-      Analyze the problem in depth:
-      1. Read the files referenced in the issue
-      2. Understand the root cause
-      3. Assess impact and scope
-      4. Identify what tests are needed
-
-      Post your analysis as a comment on the issue:
-      POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues/{number}/comments
-      Auth: -H "Authorization: token {{context.gitea_token}}"
-      Body: {"body": "## Analysis\n\n<your detailed analysis>"}
-
-      Output: the issue number and your analysis.
-    save_to: analysis.txt
+  # ─── PHASE 2: Plan (needs both discoveries) ──────────────────────────
 
   - name: plan
-    load_from: analysis.txt
+    needs: ["pick-issue", "scan-codebase"]
+    when: "{{pick-issue.output}} not_empty"
+    load_from:
+      - current-issue.txt
+      - codebase-map.txt
     prompt: |
-      Based on this analysis:
-      {{artifact.analysis}}
+      Issue to fix:
+      {{artifact.current-issue}}
 
-      Create a technical implementation plan:
-      1. List specific files to modify/create
-      2. Describe each change concisely
-      3. List tests to write
-      4. Note any dependency updates needed
+      Codebase structure:
+      {{artifact.codebase-map}}
 
-      Rules:
-      {{context.rules}}
+      Read relevant source files. Analyze the root cause.
+      Create a focused plan: files to change, tests to add.
 
-      Post the plan as a comment on the issue:
+      Post ONE comment on the issue with your analysis and plan:
       POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues/{number}/comments
-      Auth: -H "Authorization: token {{context.gitea_token}}"
-      Body: {"body": "## Implementation Plan\n\n<your plan>"}
+      Authorization: token {{context.gitea_token}}
+      Body: {"body": "## Analysis & Plan\n\n<analysis and plan>"}
 
-      Output: the plan.
+      Output ONLY: issue number, title, and plan steps.
     save_to: plan.txt
 
+  # ─── PHASE 3: Implement ──────────────────────────────────────────────
+
   - name: implement
+    needs: ["plan"]
     load_from: plan.txt
     prompt: |
-      Implement the fix based on this plan:
+      Implement the fix based on:
       {{artifact.plan}}
 
-      You are in the repo directory. Work on a new branch:
-      git checkout -b fix/issue-{number} 2>/dev/null || git checkout fix/issue-{number}
-
-      Follow these rules strictly:
-      {{context.rules}}
+      Rules: {{context.rules}}
 
       Steps:
-      1. Make the code changes described in the plan
-      2. Write/update tests
-      3. Run tests to verify
-      4. Make small, focused commits with descriptive messages
-      5. Rebase on latest main before pushing:
-         git fetch origin main && git rebase origin/main
-         If rebase conflicts arise, resolve them and run tests again.
-      6. Push the branch:
-         git push -u origin fix/issue-{number} --force-with-lease
+      1. Create branch: fix/issue-{number}
+      2. Implement changes + write tests
+      3. Run tests: verify they pass
+      4. Only update README if public API/config changed
+      5. Small focused commits with descriptive messages
+      6. Rebase: git fetch origin main && git rebase origin/main
+      7. Push: git push -u origin fix/issue-{number} --force-with-lease
 
-      If a dependency update is needed, update dependency files and commit separately.
-
-      Output: list of commits made and test results.
+      Output ONLY: issue number, branch name, commits, test results.
     save_to: implementation.txt
+    on_failure: retry
+    max_retries: 1
+
+  # ─── PHASE 4: Validate ───────────────────────────────────────────────
 
   - name: validate
+    needs: ["implement"]
     load_from: implementation.txt
     prompt: |
       Validate the implementation:
       {{artifact.implementation}}
 
+      You are on the branch. Do NOT re-run tests that already passed.
+
       Check:
-      1. Do all tests pass?
-      2. Does the code compile/build cleanly?
-      3. Are the changes minimal and focused on the issue?
-      4. Is there anything unclear or incomplete?
+      1. Coverage: run coverage check, add tests if below threshold
+      2. Build: must compile cleanly
+      3. Changes are minimal and focused
 
-      If something is wrong:
-      1. Post a comment on the issue explaining what needs fixing:
-         POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/issues/{number}/comments
-         Auth: -H "Authorization: token {{context.gitea_token}}"
-         Body: {"body": "## Validation Failed\n\n<what's wrong and what to fix>"}
-      2. Your LAST line of output MUST be exactly: NEEDS_WORK
+      If you added tests, push them.
 
-      If everything is OK, your LAST line of output MUST be exactly: VALIDATED
-
-      IMPORTANT: The very last line you output must be either VALIDATED or NEEDS_WORK with no other text on that line.
+      Last line must be exactly: VALIDATED or NEEDS_WORK
     save_to: validation.txt
+    on_failure: retry
+    max_retries: 1
+
+  # ─── PHASE 5: Ship ───────────────────────────────────────────────────
 
   - name: create-mr
+    needs: ["validate"]
     when: "{{validate.output}} contains VALIDATED"
     load_from: current-issue.txt
     prompt: |
-      The issue:
-      {{artifact.current-issue}}
+      Issue: {{artifact.current-issue}}
 
-      The implementation (contains issue number and branch name):
-      {{implement.output}}
+      1. Create PR:
+         POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/pulls
+         Authorization: token {{context.gitea_token}}
+         Body: {"title": "Fix #{number}: <title>", "body": "Closes #{number}\n\n<summary>", "head": "fix/issue-{number}", "base": "main"}
 
-      Create a pull request in Gitea using the issue number and branch from above:
+      2. Squash-merge:
+         POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/pulls/{pr_number}/merge
+         Authorization: token {{context.gitea_token}}
+         Body: {"Do": "squash", "delete_branch_after_merge": true}
 
-      POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{{context.repo}}/pulls
-      Auth: -H "Authorization: token {{context.gitea_token}}"
-      Body:
-      {
-        "title": "Fix #{number}: <issue title>",
-        "body": "Closes #{number}\n\n## Changes\n<brief summary from implementation>",
-        "head": "fix/issue-{number}",
-        "base": "main"
-      }
+      3. Labels: remove "in-progress", add "in-review" (create if missing, color #0e8a16)
 
-      Then update the issue:
-      1. Remove label "in-progress", add label "in-review" (create if not exists, color "#0e8a16")
-      2. Post comment: "MR created: <link to PR>"
+      4. Update local: git checkout main && git pull origin main
 
-      Output: PR number and URL.
+      Last line: MERGED or MERGE_FAILED
+    on_failure: skip

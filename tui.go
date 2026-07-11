@@ -96,6 +96,7 @@ type TUIModel struct {
 	hasGit         bool
 	userScrolling  bool
 	showPrompt     bool
+	showGraph      bool
 	focusedPanel   FocusedPanel
 	maxLoops       int
 	currentLoop    int
@@ -350,6 +351,13 @@ func (m *TUIModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.showPrompt {
 			m.showPrompt = false
 		}
+		if m.showGraph {
+			m.showGraph = false
+		}
+		return m, nil
+	
+	case "g":
+		m.showGraph = !m.showGraph
 		return m, nil
 	
 	case "enter":
@@ -615,6 +623,11 @@ func (m *TUIModel) View() tea.View {
 		if m.showPrompt && m.pipelineEnded && m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Prompt != "" {
 			result = m.renderPromptPopup(result)
 		}
+
+		// Render graph overlay
+		if m.showGraph {
+			result = m.renderGraphPopup(result)
+		}
 		
 		content = result
 	}
@@ -726,19 +739,19 @@ func (m *TUIModel) renderFooter() string {
 func (m *TUIModel) buildHelpText() string {
 	if m.pipelineEnded {
 		if m.width >= wideTerminalWidth {
-			return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [r] Restart │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+			return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [g] Graph │ [r] Restart │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
 		} else if m.width >= mediumTerminalWidth {
-			return "⌨  [↑↓/jk] Navigate │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [q] Quit"
+			return "⌨  [↑↓/jk] Navigate │ [Enter] Prompt │ [g] Graph │ [r] Restart │ [Tab] Panel │ [q] Quit"
 		} else {
-			return "⌨  [↑↓/jk] Nav │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [q] Quit"
+			return "⌨  [↑↓/jk] Nav │ [Enter] Prompt │ [g] Graph │ [r] Restart │ [q] Quit"
 		}
 	} else {
 		if m.width >= extraWideTerminalWidth {
-			return "⌨  [R] Retry step │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+			return "⌨  [R] Retry step │ [g] Graph │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
 		} else if m.width >= narrowTerminalWidth {
-			return "⌨  [R] Retry │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
+			return "⌨  [R] Retry │ [g] Graph │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [q] Quit"
 		} else {
-			return "⌨  [R] Retry │ [Tab] Panel │ [q] Quit"
+			return "⌨  [R] Retry │ [g] Graph │ [q] Quit"
 		}
 	}
 }
@@ -1110,6 +1123,62 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 	popup := popupStyle.Render(popupContent)
 	
 	// Overlay popup on base content
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		popup,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("0"))),
+	)
+}
+
+func (m *TUIModel) renderGraphPopup(baseContent string) string {
+	popupWidth := int(float64(m.width) * popupWidthRatio)
+	if popupWidth > NarrowModeWidth {
+		popupWidth = NarrowModeWidth
+	}
+	popupHeight := int(float64(m.height) * popupHeightRatio)
+	if popupHeight > PopupMaxHeight {
+		popupHeight = PopupMaxHeight
+	}
+
+	// Create popup style
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(neonCyan).
+		Background(darkerBg).
+		Padding(1, 2).
+		Width(popupWidth).
+		Height(popupHeight)
+
+	// Title
+	popupTitle := boldCyanStyle.Render("DEPENDENCY GRAPH")
+
+	// Render the graph
+	graphContent := RenderGraph(m.pipeline.Steps, m.steps)
+	if graphContent == "" {
+		graphContent = "No dependencies defined (linear pipeline)"
+	}
+
+	// Footer
+	footer := lipgloss.NewStyle().
+		Foreground(neonYellow).
+		Faint(true).
+		Render("[g/Esc] Close")
+
+	popupContent := lipgloss.JoinVertical(
+		lipgloss.Left,
+		popupTitle,
+		"",
+		graphContent,
+		"",
+		footer,
+	)
+
+	popup := popupStyle.Render(popupContent)
+
 	return lipgloss.Place(
 		m.width,
 		m.height,

@@ -27,12 +27,34 @@ type Step struct {
 	Prompt     string       `yaml:"prompt"`
 	PromptFile string       `yaml:"prompt_file,omitempty"`
 	SaveTo     string       `yaml:"save_to"`
-	LoadFrom   string       `yaml:"load_from"`
+	LoadFrom   StringSlice  `yaml:"load_from"`
 	When       string       `yaml:"when"`
 	Agent      *AgentConfig `yaml:"agent,omitempty"`
 	OnFailure  string       `yaml:"on_failure,omitempty"`
 	MaxRetries int          `yaml:"max_retries,omitempty"`
 	Needs      []string     `yaml:"needs,omitempty"`
+}
+
+// StringSlice is a []string that unmarshals from either a single string or a list.
+type StringSlice []string
+
+func (s *StringSlice) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		if value.Value != "" {
+			*s = []string{value.Value}
+		}
+		return nil
+	case yaml.SequenceNode:
+		var items []string
+		if err := value.Decode(&items); err != nil {
+			return err
+		}
+		*s = items
+		return nil
+	default:
+		return fmt.Errorf("load_from must be a string or list of strings")
+	}
 }
 
 // expandEnvWithDefaults expands ${VAR}, $VAR, and ${VAR:-default} syntax.

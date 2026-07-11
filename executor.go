@@ -37,27 +37,22 @@ func evaluateCondition(condition string, outputs map[string]string, artifacts ma
 		cond = strings.ReplaceAll(cond, fmt.Sprintf("{{artifact.%s}}", name), content)
 	}
 
-	// Simple condition evaluation
-	if strings.Contains(cond, " contains ") {
-		parts := strings.SplitN(cond, " contains ", 2)
-		if len(parts) == 2 {
-			haystack := strings.Trim(parts[0], "' \"")
-			needle := strings.Trim(parts[1], "' \"")
-			return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
-		}
-	}
-	if strings.Contains(cond, " equals ") {
-		parts := strings.SplitN(cond, " equals ", 2)
-		if len(parts) == 2 {
-			left := strings.Trim(parts[0], "' \"")
-			right := strings.Trim(parts[1], "' \"")
-			return left == right
-		}
-	}
+	// Evaluate condition by checking operators from the END of the string.
+	// This prevents false matches when interpolated output contains operator keywords.
 	if cond == "not_empty" || strings.HasSuffix(cond, " not_empty") {
 		value := strings.TrimSuffix(cond, " not_empty")
 		value = strings.TrimSpace(value)
 		return value != ""
+	}
+	if idx := strings.LastIndex(cond, " contains "); idx >= 0 {
+		haystack := strings.Trim(cond[:idx], "' \"")
+		needle := strings.Trim(cond[idx+len(" contains "):], "' \"")
+		return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+	}
+	if idx := strings.LastIndex(cond, " equals "); idx >= 0 {
+		left := strings.Trim(cond[:idx], "' \"")
+		right := strings.Trim(cond[idx+len(" equals "):], "' \"")
+		return left == right
 	}
 
 	return true
@@ -298,18 +293,18 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			continue
 		}
 
-		// Load artifact if specified
-		if step.LoadFrom != "" {
-			content, err := loadArtifact(step.LoadFrom)
+		// Load artifacts if specified
+		for _, loadFile := range step.LoadFrom {
+			content, err := loadArtifact(loadFile)
 			if err != nil {
-				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in .octos/artifacts/)\n  hint: was the producing step skipped or is this the first run?", step.Name, step.LoadFrom)
+				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in .octos/artifacts/)\n  hint: was the producing step skipped or is this the first run?", step.Name, loadFile)
 				if onStream != nil {
 					onStream(i, msg)
 				} else if !silent {
 					fmt.Fprintln(os.Stderr, msg)
 				}
 			} else {
-				artifactName := strings.TrimSuffix(step.LoadFrom, filepath.Ext(step.LoadFrom))
+				artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 				artifacts[artifactName] = content
 				ctx.Outputs["artifact."+artifactName] = content
 			}
@@ -568,16 +563,16 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 				go func(idx int, s Step) {
 					defer wg.Done()
 
-					// Load artifact if specified
-					if s.LoadFrom != "" {
-						content, err := loadArtifact(s.LoadFrom)
+					// Load artifacts if specified
+					for _, loadFile := range s.LoadFrom {
+						content, err := loadArtifact(loadFile)
 						if err != nil {
-							msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", s.Name, s.LoadFrom)
+							msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", s.Name, loadFile)
 							if onStream != nil {
 								onStream(idx, msg)
 							}
 						} else {
-							artifactName := strings.TrimSuffix(s.LoadFrom, filepath.Ext(s.LoadFrom))
+							artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 							// Note: artifacts map access is safe here since parallel steps at same level
 							// don't produce artifacts that siblings need
 							ctx.mu.Lock()
@@ -757,15 +752,15 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		return nil
 	}
 
-	if step.LoadFrom != "" {
-		content, err := loadArtifact(step.LoadFrom)
+	for _, loadFile := range step.LoadFrom {
+		content, err := loadArtifact(loadFile)
 		if err != nil {
-			msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", step.Name, step.LoadFrom)
+			msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", step.Name, loadFile)
 			if onStream != nil {
 				onStream(i, msg)
 			}
 		} else {
-			artifactName := strings.TrimSuffix(step.LoadFrom, filepath.Ext(step.LoadFrom))
+			artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 			artifacts[artifactName] = content
 			ctx.Outputs["artifact."+artifactName] = content
 		}

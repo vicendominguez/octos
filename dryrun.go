@@ -73,13 +73,13 @@ func DryRun(p *Pipeline) error {
 		}
 
 		// Check load_from
-		if step.LoadFrom != "" {
-			artifactPath := filepath.Join(".octos", "artifacts", step.LoadFrom)
+		for _, loadFile := range step.LoadFrom {
+			artifactPath := filepath.Join(".octos", "artifacts", loadFile)
 			if _, err := os.Stat(artifactPath); err != nil {
-				if producer, ok := producedArtifacts[step.LoadFrom]; ok {
-					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", step.LoadFrom, producer))
+				if producer, ok := producedArtifacts[loadFile]; ok {
+					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", loadFile, producer))
 				} else {
-					warnings = append(warnings, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, step.LoadFrom))
+					warnings = append(warnings, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, loadFile))
 				}
 			}
 		}

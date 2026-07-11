@@ -145,6 +145,7 @@ func stripANSI(s string) string {
 type PipelineContext struct {
 	Global  map[string]any
 	Outputs map[string]string
+	mu      sync.Mutex
 }
 
 type ProgressCallback func(stepIndex int, output string)
@@ -155,41 +156,97 @@ type RetryCallback func(stepIndex int, attempt int, maxRetries int)
 
 // PipelineRunner manages pipeline execution and exposes control over the active agent process.
 type PipelineRunner struct {
-	activeCmd *exec.Cmd
-	mu        sync.Mutex
-	killed    bool
+	activeCmds map[int]*exec.Cmd
+	killedSteps map[int]bool
+	mu          sync.Mutex
 }
 
-// KillCurrentStep kills the currently running agent process, causing the step to be retried.
-func (r *PipelineRunner) KillCurrentStep() {
+// KillStep kills a specific running step by index, causing it to be retried.
+func (r *PipelineRunner) KillStep(index int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.killed = true
-	if r.activeCmd != nil && r.activeCmd.Process != nil {
-		r.activeCmd.Process.Kill()
+	if r.killedSteps == nil {
+		r.killedSteps = make(map[int]bool)
+	}
+	r.killedSteps[index] = true
+	if cmd, ok := r.activeCmds[index]; ok && cmd.Process != nil {
+		cmd.Process.Kill()
 	}
 }
 
-// setActiveCmd stores the current command for external kill support.
+// KillCurrentStep kills all currently running steps (backward compat for single-step mode).
+func (r *PipelineRunner) KillCurrentStep() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.killedSteps == nil {
+		r.killedSteps = make(map[int]bool)
+	}
+	for idx, cmd := range r.activeCmds {
+		r.killedSteps[idx] = true
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+	}
+	// Also set legacy index -1 for backward compat
+	r.killedSteps[-1] = true
+}
+
+// setActiveCmd stores the command for a specific step index.
 func (r *PipelineRunner) setActiveCmd(cmd *exec.Cmd) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.activeCmd = cmd
+	// Legacy: store with index -1 for non-parallel mode
+	if r.activeCmds == nil {
+		r.activeCmds = make(map[int]*exec.Cmd)
+	}
+	r.activeCmds[-1] = cmd
 }
 
-// clearActiveCmd removes the reference to the finished command.
+// setActiveCmdForStep stores the command for a specific step index.
+func (r *PipelineRunner) setActiveCmdForStep(index int, cmd *exec.Cmd) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.activeCmds == nil {
+		r.activeCmds = make(map[int]*exec.Cmd)
+	}
+	r.activeCmds[index] = cmd
+}
+
+// clearActiveCmd removes the reference for legacy single-step mode.
 func (r *PipelineRunner) clearActiveCmd() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.activeCmd = nil
+	delete(r.activeCmds, -1)
 }
 
-// consumeKilled reports whether a manual kill was requested and resets the flag.
+// clearActiveCmdForStep removes the reference for a specific step.
+func (r *PipelineRunner) clearActiveCmdForStep(index int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.activeCmds, index)
+}
+
+// consumeKilled reports whether a manual kill was requested and resets the flag (legacy).
 func (r *PipelineRunner) consumeKilled() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	k := r.killed
-	r.killed = false
+	if r.killedSteps == nil {
+		return false
+	}
+	k := r.killedSteps[-1]
+	delete(r.killedSteps, -1)
+	return k
+}
+
+// consumeKilledForStep reports whether a manual kill was requested for a specific step.
+func (r *PipelineRunner) consumeKilledForStep(index int) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.killedSteps == nil {
+		return false
+	}
+	k := r.killedSteps[index]
+	delete(r.killedSteps, index)
 	return k
 }
 
@@ -252,6 +309,18 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 				fmt.Printf("→ Resuming from step %d (%s)\n", startStep+1, p.Steps[startStep].Name)
 			}
 		}
+	}
+
+	// Use parallel execution when dependencies are declared
+	if p.hasNeeds() && startStep == 0 {
+		err := runPipelineByLevels(runCtx, p, opts, ctx, artifacts, silent, startTime)
+		if onDone != nil {
+			onDone()
+		}
+		if err == nil {
+			ClearState(p.File)
+		}
+		return err
 	}
 
 	for i := startStep; i < len(p.Steps); i++ {
@@ -466,6 +535,415 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	return nil
 }
 
+// runPipelineByLevels executes steps grouped by topological level.
+// Steps in the same level run in parallel.
+func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, ctx *PipelineContext, artifacts map[string]string, silent bool, startTime time.Time) error {
+	onStart := opts.OnStart
+	onOutput := opts.OnOutput
+	onComplete := opts.OnComplete
+	onStream := opts.OnStream
+	onFileChanges := opts.OnFileChanges
+	onRetry := opts.OnRetry
+	onSkip := opts.OnSkip
+	runner := opts.Runner
+
+	// Build parent map and assign levels
+	parents := make(map[string][]string)
+	for _, step := range p.Steps {
+		for _, dep := range step.Needs {
+			parents[step.Name] = append(parents[step.Name], dep)
+		}
+	}
+	levels := assignLevels(p.Steps, parents)
+
+	// Find max level
+	maxLevel := 0
+	for _, lvl := range levels {
+		if lvl > maxLevel {
+			maxLevel = lvl
+		}
+	}
+
+	// Build step index map
+	stepIndex := make(map[string]int)
+	for i, step := range p.Steps {
+		stepIndex[step.Name] = i
+	}
+
+	// Execute level by level
+	for lvl := 0; lvl <= maxLevel; lvl++ {
+		// Collect steps at this level
+		var levelSteps []int
+		for _, step := range p.Steps {
+			if levels[step.Name] == lvl {
+				levelSteps = append(levelSteps, stepIndex[step.Name])
+			}
+		}
+
+		if len(levelSteps) == 1 {
+			// Single step: run sequentially (simpler, same as before)
+			i := levelSteps[0]
+			if err := runSingleStep(runCtx, p, i, opts, ctx, artifacts, silent, startTime); err != nil {
+				return err
+			}
+		} else {
+			// Multiple steps: run in parallel
+			type stepResult struct {
+				index  int
+				output string
+				err    error
+			}
+
+			results := make(chan stepResult, len(levelSteps))
+			var wg sync.WaitGroup
+
+			for _, i := range levelSteps {
+				step := p.Steps[i]
+
+				// Check condition before launching
+				if !evaluateCondition(step.When, ctx.Outputs, artifacts) {
+					if !silent {
+						fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
+					}
+					if onSkip != nil {
+						onSkip(i)
+					}
+					continue
+				}
+
+				wg.Add(1)
+				go func(idx int, s Step) {
+					defer wg.Done()
+
+					// Load artifact if specified
+					if s.LoadFrom != "" {
+						content, err := loadArtifact(s.LoadFrom)
+						if err != nil {
+							msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", s.Name, s.LoadFrom)
+							if onStream != nil {
+								onStream(idx, msg)
+							}
+						} else {
+							artifactName := strings.TrimSuffix(s.LoadFrom, filepath.Ext(s.LoadFrom))
+							// Note: artifacts map access is safe here since parallel steps at same level
+							// don't produce artifacts that siblings need
+							ctx.mu.Lock()
+							artifacts[artifactName] = content
+							ctx.Outputs["artifact."+artifactName] = content
+							ctx.mu.Unlock()
+						}
+					}
+
+					// Build prompt
+					ctx.mu.Lock()
+					prompt, warnings := interpolate(s.Prompt, ctx)
+					fullPrompt := buildPrompt(ctx, prompt)
+					ctx.mu.Unlock()
+
+					for _, w := range warnings {
+						if onStream != nil {
+							onStream(idx, w)
+						}
+					}
+
+					if onStart != nil {
+						onStart(idx, prompt)
+					}
+
+					start := time.Now()
+
+					beforeFiles := scanDirectory(".")
+
+					agent := p.Agent
+					if s.Agent != nil {
+						agent = *s.Agent
+					}
+
+					var output string
+					var err error
+					onFailure := s.OnFailure
+					if onFailure == "" {
+						onFailure = "fail_fast"
+					}
+					maxRetries := s.MaxRetries
+					if maxRetries <= 0 && onFailure == "retry" {
+						maxRetries = 1
+					}
+
+					attempts := 0
+					retryPrompt := fullPrompt
+					for {
+						attempts++
+						if onStream != nil {
+							output, err = runAgentWithStreamingForStep(runCtx, agent, retryPrompt, func(line string) {
+								onStream(idx, line)
+							}, runner, idx)
+						} else {
+							output, err = runAgentForStep(runCtx, agent, retryPrompt, runner, idx)
+						}
+
+						if err == nil {
+							break
+						}
+
+						if runner != nil && runner.consumeKilledForStep(idx) {
+							if onStream != nil {
+								onStream(idx, "⟳ Manual retry requested — restarting step...")
+							}
+							retryPrompt = fullPrompt
+							attempts = 0
+							continue
+						}
+
+						if onFailure == "retry" && attempts <= maxRetries {
+							if onRetry != nil {
+								onRetry(idx, attempts, maxRetries+1)
+							}
+							if onStream != nil {
+								onStream(idx, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
+							}
+							retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
+							continue
+						}
+						break
+					}
+
+					duration := time.Since(start)
+
+					if err != nil && onFailure == "skip" {
+						if onStream != nil {
+							onStream(idx, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
+						}
+						if onComplete != nil {
+							onComplete(idx, duration, nil)
+						}
+						results <- stepResult{idx, "", nil}
+						return
+					}
+
+					if err != nil {
+						if onComplete != nil {
+							onComplete(idx, duration, err)
+						}
+						results <- stepResult{idx, "", err}
+						return
+					}
+
+					// Detect file changes
+					changes := detectFileChanges(beforeFiles)
+					if onFileChanges != nil && len(changes) > 0 {
+						onFileChanges(idx, changes)
+					}
+
+					// Save artifact
+					if s.SaveTo != "" {
+						saveArtifact(s.SaveTo, output)
+					}
+
+					if onOutput != nil {
+						onOutput(idx, output)
+					}
+					if onComplete != nil {
+						onComplete(idx, duration, nil)
+					}
+
+					results <- stepResult{idx, output, nil}
+				}(i, step)
+			}
+
+			// Wait for all parallel steps to finish
+			go func() {
+				wg.Wait()
+				close(results)
+			}()
+
+			for res := range results {
+				if res.err != nil {
+					return fmt.Errorf("error: step '%s' failed\n  cause: %w", p.Steps[res.index].Name, res.err)
+				}
+				// Store output
+				ctx.mu.Lock()
+				ctx.Outputs[p.Steps[res.index].Name] = res.output
+				ctx.mu.Unlock()
+			}
+
+			// Save state after level completion
+			lastIdx := levelSteps[len(levelSteps)-1]
+			state := &PipelineState{
+				PipelineFile:      p.File,
+				LastCompletedStep: lastIdx,
+				Outputs:           ctx.Outputs,
+				StartTime:         startTime.Format(time.RFC3339),
+			}
+			SaveState(state)
+		}
+	}
+
+	return nil
+}
+
+// runSingleStep executes a single step (used within level-based execution).
+func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, ctx *PipelineContext, artifacts map[string]string, silent bool, startTime time.Time) error {
+	step := p.Steps[i]
+	onStart := opts.OnStart
+	onOutput := opts.OnOutput
+	onComplete := opts.OnComplete
+	onStream := opts.OnStream
+	onFileChanges := opts.OnFileChanges
+	onRetry := opts.OnRetry
+	onSkip := opts.OnSkip
+	runner := opts.Runner
+
+	if !evaluateCondition(step.When, ctx.Outputs, artifacts) {
+		if !silent {
+			fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
+		}
+		if onSkip != nil {
+			onSkip(i)
+		}
+		return nil
+	}
+
+	if step.LoadFrom != "" {
+		content, err := loadArtifact(step.LoadFrom)
+		if err != nil {
+			msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", step.Name, step.LoadFrom)
+			if onStream != nil {
+				onStream(i, msg)
+			}
+		} else {
+			artifactName := strings.TrimSuffix(step.LoadFrom, filepath.Ext(step.LoadFrom))
+			artifacts[artifactName] = content
+			ctx.Outputs["artifact."+artifactName] = content
+		}
+	}
+
+	prompt, warnings := interpolate(step.Prompt, ctx)
+	fullPrompt := buildPrompt(ctx, prompt)
+
+	for _, w := range warnings {
+		if onStream != nil {
+			onStream(i, w)
+		}
+	}
+
+	if onStart != nil {
+		onStart(i, prompt)
+	}
+
+	start := time.Now()
+	if !silent {
+		fmt.Printf("→ Running step: %s\n", step.Name)
+	}
+
+	beforeFiles := scanDirectory(".")
+
+	agent := p.Agent
+	if step.Agent != nil {
+		agent = *step.Agent
+	}
+
+	var output string
+	var err error
+	onFailure := step.OnFailure
+	if onFailure == "" {
+		onFailure = "fail_fast"
+	}
+	maxRetries := step.MaxRetries
+	if maxRetries <= 0 && onFailure == "retry" {
+		maxRetries = 1
+	}
+
+	attempts := 0
+	retryPrompt := fullPrompt
+	for {
+		attempts++
+		if onStream != nil {
+			output, err = runAgentWithStreamingForStep(runCtx, agent, retryPrompt, func(line string) {
+				onStream(i, line)
+			}, runner, i)
+		} else {
+			output, err = runAgentForStep(runCtx, agent, retryPrompt, runner, i)
+		}
+
+		if err == nil {
+			break
+		}
+
+		if runner != nil && runner.consumeKilledForStep(i) {
+			if onStream != nil {
+				onStream(i, "⟳ Manual retry requested — restarting step...")
+			}
+			retryPrompt = fullPrompt
+			attempts = 0
+			continue
+		}
+
+		if onFailure == "retry" && attempts <= maxRetries {
+			if onRetry != nil {
+				onRetry(i, attempts, maxRetries+1)
+			}
+			if onStream != nil {
+				onStream(i, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
+			}
+			retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
+			continue
+		}
+		break
+	}
+
+	duration := time.Since(start)
+
+	if err != nil {
+		switch onFailure {
+		case "skip":
+			if onStream != nil {
+				onStream(i, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
+			}
+			if onComplete != nil {
+				onComplete(i, duration, nil)
+			}
+		default:
+			if onComplete != nil {
+				onComplete(i, duration, err)
+			}
+			return fmt.Errorf("error: step '%s' failed\n  cause: %w", step.Name, err)
+		}
+		return nil
+	}
+
+	ctx.Outputs[step.Name] = output
+
+	changes := detectFileChanges(beforeFiles)
+	if onFileChanges != nil && len(changes) > 0 {
+		onFileChanges(i, changes)
+	}
+
+	if step.SaveTo != "" {
+		saveArtifact(step.SaveTo, output)
+	}
+
+	if onOutput != nil {
+		onOutput(i, output)
+	}
+	if onComplete != nil {
+		onComplete(i, duration, nil)
+	}
+
+	state := &PipelineState{
+		PipelineFile:      p.File,
+		LastCompletedStep: i,
+		Outputs:           ctx.Outputs,
+		StartTime:         startTime.Format(time.RFC3339),
+	}
+	SaveState(state)
+
+	if !silent {
+		fmt.Printf("✓ Step %s completed\n\n", step.Name)
+	}
+	return nil
+}
+
 func buildPrompt(ctx *PipelineContext, newTask string) string {
 	var buf bytes.Buffer
 
@@ -622,3 +1100,98 @@ func runAgentWithStreaming(ctx context.Context, agent AgentConfig, prompt string
 	return result, cmdErr
 }
 
+
+// runAgentForStep is like runAgent but tracks the command per step index.
+func runAgentForStep(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner, stepIdx int) (string, error) {
+	var cmd *exec.Cmd
+	if agent.Stdin {
+		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
+		cmd.Stdin = strings.NewReader(prompt)
+	} else {
+		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
+	}
+
+	if runner != nil {
+		runner.setActiveCmdForStep(stepIdx, cmd)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if runner != nil {
+		runner.clearActiveCmdForStep(stepIdx)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, string(output))
+	}
+
+	return stripANSI(string(output)), nil
+}
+
+// runAgentWithStreamingForStep is like runAgentWithStreaming but tracks per step index.
+func runAgentWithStreamingForStep(ctx context.Context, agent AgentConfig, prompt string, onLine func(string), runner *PipelineRunner, stepIdx int) (string, error) {
+	var cmd *exec.Cmd
+	if agent.Stdin {
+		cmd = exec.CommandContext(ctx, agent.Cmd, agent.Args...)
+		cmd.Stdin = strings.NewReader(prompt)
+	} else {
+		cmd = exec.CommandContext(ctx, agent.Cmd, buildArgs(agent, prompt)...)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	if runner != nil {
+		detachFromTerminal(cmd)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	if runner != nil {
+		runner.setActiveCmdForStep(stepIdx, cmd)
+	}
+
+	var (
+		mu     sync.Mutex
+		output strings.Builder
+	)
+	writeLine := func(line string) {
+		mu.Lock()
+		output.WriteString(line + "\n")
+		mu.Unlock()
+		if onLine != nil {
+			onLine(line)
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	scan := func(r io.Reader) {
+		defer wg.Done()
+		s := bufio.NewScanner(r)
+		for s.Scan() {
+			writeLine(stripANSI(s.Text()))
+		}
+	}
+	go scan(stdout)
+	go scan(stderr)
+
+	cmdErr := cmd.Wait()
+	if runner != nil {
+		runner.clearActiveCmdForStep(stepIdx)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	result := output.String()
+	mu.Unlock()
+
+	return result, cmdErr
+}

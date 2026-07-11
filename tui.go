@@ -174,7 +174,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 		hasGit:      exec.Command("git", "--version").Run() == nil,
 		maxLoops:    0,
 		currentLoop: 1,
-		runner:      &PipelineRunner{},
+		runner:      &PipelineRunner{activeCmds: make(map[int]*exec.Cmd), killedSteps: make(map[int]bool)},
 	}
 	m.refreshGitBranch()
 
@@ -254,8 +254,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.steps[msg.index].Prompt = msg.prompt
 			m.currentStep = msg.index
 			m.statusMsg = fmt.Sprintf("Running step %d/%d: %s", msg.index+1, len(m.steps), m.steps[msg.index].Name)
-			m.scrollToStep(msg.index)
-			m.userScrolling = false
+			// Auto-follow: move selection to new running step unless user navigated away
+			if !m.userScrolling {
+				m.selectedStep = msg.index
+				m.scrollToStep(msg.index)
+			}
 		}
 		return m, nil
 
@@ -445,9 +448,7 @@ func (m *TUIModel) buildStepsView(showTitle bool, showDuration bool) string {
 		
 		stepsView.WriteString(line)
 		
-		if !m.pipelineEnded && i == m.currentStep && step.Status == StatusRunning {
-			stepsView.WriteString(" ◀")
-		} else if m.pipelineEnded && i == m.selectedStep {
+		if i == m.selectedStep {
 			stepsView.WriteString(" ◀")
 		}
 		stepsView.WriteString("\n")
@@ -471,10 +472,7 @@ func (m *TUIModel) refreshGitBranch() {
 }
 
 func (m *TUIModel) getDisplayStep() int {
-	if m.pipelineEnded {
-		return m.selectedStep
-	}
-	return m.currentStep
+	return m.selectedStep
 }
 
 func (m *TUIModel) toggleFocusedPanel() {
@@ -512,9 +510,9 @@ func (m *TUIModel) handleRetryStepKey() (tea.Model, tea.Cmd) {
 	if m.pipelineEnded || m.runner == nil {
 		return m, nil
 	}
-	if m.currentStep < len(m.steps) && m.steps[m.currentStep].Status == StatusRunning {
-		m.statusMsg = fmt.Sprintf("Retrying step: %s", m.steps[m.currentStep].Name)
-		m.runner.KillCurrentStep()
+	if m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Status == StatusRunning {
+		m.statusMsg = fmt.Sprintf("Retrying step: %s", m.steps[m.selectedStep].Name)
+		m.runner.KillStep(m.selectedStep)
 	}
 	return m, nil
 }
@@ -524,8 +522,9 @@ func (m *TUIModel) handleDownKey() (tea.Model, tea.Cmd) {
 		m.promptView.ScrollDown(1)
 		return m, nil
 	}
-	if m.pipelineEnded && m.selectedStep < len(m.steps)-1 {
+	if m.selectedStep < len(m.steps)-1 {
 		m.selectedStep++
+		m.userScrolling = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -536,8 +535,9 @@ func (m *TUIModel) handleUpKey() (tea.Model, tea.Cmd) {
 		m.promptView.ScrollUp(1)
 		return m, nil
 	}
-	if m.pipelineEnded && m.selectedStep > 0 {
+	if m.selectedStep > 0 {
 		m.selectedStep--
+		m.userScrolling = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -830,13 +830,9 @@ func (m *TUIModel) renderContent(width, contentHeight int) string {
 	m.outputView.SetContent(outputContent)
 
 	// Auto-scroll
-	if !m.pipelineEnded && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
-		if m.userScrolling && m.outputView.AtBottom() {
-			m.userScrolling = false
-		}
-		if !m.userScrolling {
-			m.outputView.GotoBottom()
-		}
+	// Auto-scroll output if viewing a running step
+	if displayStep < len(m.steps) && m.steps[displayStep].Status == StatusRunning {
+		m.outputView.GotoBottom()
 	}
 
 	// File changes

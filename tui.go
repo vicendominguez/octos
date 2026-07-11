@@ -1144,7 +1144,6 @@ func (m *TUIModel) renderGraphPopup(baseContent string) string {
 	popupStyle := lipgloss.NewStyle().
 		Border(lipgloss.DoubleBorder()).
 		BorderForeground(neonCyan).
-		Background(darkerBg).
 		Padding(1, 2).
 		Width(popupWidth).
 		Height(popupHeight)

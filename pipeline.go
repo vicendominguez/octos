@@ -32,6 +32,7 @@ type Step struct {
 	Agent      *AgentConfig `yaml:"agent,omitempty"`
 	OnFailure  string       `yaml:"on_failure,omitempty"`
 	MaxRetries int          `yaml:"max_retries,omitempty"`
+	Needs      []string     `yaml:"needs,omitempty"`
 }
 
 // expandEnvWithDefaults expands ${VAR}, $VAR, and ${VAR:-default} syntax.
@@ -106,10 +107,15 @@ func (p *Pipeline) Validate() error {
 	if len(p.Steps) == 0 {
 		return fmt.Errorf("error: at least one step is required\n  hint: add a 'steps:' section with at least one '- name:' entry")
 	}
+
+	stepNames := make(map[string]int) // name → position index
 	
 	for i, step := range p.Steps {
 		if step.Name == "" {
 			return fmt.Errorf("error: step %d has no name\n  hint: every step needs a unique 'name:' field", i+1)
+		}
+		if _, exists := stepNames[step.Name]; exists {
+			return fmt.Errorf("error: duplicate step name '%s'\n  hint: each step must have a unique name", step.Name)
 		}
 		if step.Prompt == "" {
 			return fmt.Errorf("error: step '%s' has no prompt\n  hint: add 'prompt:' or 'prompt_file:' to the step", step.Name)
@@ -120,7 +126,82 @@ func (p *Pipeline) Validate() error {
 		if step.MaxRetries > 0 && step.OnFailure != "retry" {
 			return fmt.Errorf("error: step '%s' has max_retries without on_failure: retry\n  hint: add 'on_failure: retry' or remove 'max_retries'", step.Name)
 		}
+
+		// Validate needs references
+		for _, dep := range step.Needs {
+			depIdx, exists := stepNames[dep]
+			if !exists {
+				return fmt.Errorf("error: step '%s' needs '%s' which is not defined before it\n  hint: referenced steps must appear earlier in the pipeline", step.Name, dep)
+			}
+			_ = depIdx
+		}
+
+		stepNames[step.Name] = i
+	}
+
+	// Detect cycles (only if any step uses needs)
+	if p.hasNeeds() {
+		if err := p.detectCycles(stepNames); err != nil {
+			return err
+		}
 	}
 	
+	return nil
+}
+
+// hasNeeds returns true if any step in the pipeline declares needs
+func (p *Pipeline) hasNeeds() bool {
+	for _, step := range p.Steps {
+		if len(step.Needs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// detectCycles checks for dependency cycles using DFS
+func (p *Pipeline) detectCycles(stepNames map[string]int) error {
+	// Build adjacency list
+	adj := make(map[string][]string)
+	for _, step := range p.Steps {
+		adj[step.Name] = step.Needs
+	}
+
+	const (
+		white = 0 // unvisited
+		gray  = 1 // in current path
+		black = 2 // fully processed
+	)
+
+	color := make(map[string]int)
+	for _, step := range p.Steps {
+		color[step.Name] = white
+	}
+
+	var visit func(name string) error
+	visit = func(name string) error {
+		color[name] = gray
+		for _, dep := range adj[name] {
+			switch color[dep] {
+			case gray:
+				return fmt.Errorf("error: dependency cycle detected: '%s' → '%s'\n  hint: remove the circular dependency", name, dep)
+			case white:
+				if err := visit(dep); err != nil {
+					return err
+				}
+			}
+		}
+		color[name] = black
+		return nil
+	}
+
+	for _, step := range p.Steps {
+		if color[step.Name] == white {
+			if err := visit(step.Name); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }

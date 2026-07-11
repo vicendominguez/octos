@@ -52,6 +52,11 @@ func DryRun(p *Pipeline) error {
 			}
 		}
 
+		// Show needs
+		if len(step.Needs) > 0 {
+			notes = append(notes, fmt.Sprintf("needs: [%s]", strings.Join(step.Needs, ", ")))
+		}
+
 		// Evaluate when condition
 		if step.When != "" {
 			canEvaluate := canEvaluateCondition(step.When, producedOutputs)

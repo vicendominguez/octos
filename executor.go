@@ -281,8 +281,11 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			fmt.Printf("→ Running step: %s\n", step.Name)
 		}
 
-		// Snapshot files before execution
-		beforeFiles := scanDirectory(".")
+		// Snapshot files before execution (only when TUI is active)
+		var beforeFiles map[string]time.Time
+		if events != nil {
+			beforeFiles = scanDirectory(".")
+		}
 
 		// Use step-specific agent or fallback to pipeline agent
 		agent := p.Agent
@@ -384,10 +387,12 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 		ctx.Outputs[step.Name] = output
 
-		// Detect file changes
-		changes := detectFileChanges(beforeFiles)
-		if len(changes) > 0 {
-			emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
+		// Detect file changes (only when TUI is active)
+		if events != nil {
+			changes := detectFileChanges(beforeFiles)
+			if len(changes) > 0 {
+				emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
+			}
 		}
 
 		// Save artifact if specified
@@ -536,7 +541,10 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 
 					start := time.Now()
 
-					beforeFiles := scanDirectory(".")
+					var beforeFiles map[string]time.Time
+					if events != nil {
+						beforeFiles = scanDirectory(".")
+					}
 
 					agent := p.Agent
 					if s.Agent != nil {
@@ -601,10 +609,12 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 						return
 					}
 
-					// Detect file changes
-					changes := detectFileChanges(beforeFiles)
-					if len(changes) > 0 {
-						emit(events, Event{Kind: EventFileChanges, StepIndex: idx, Changes: changes})
+					// Detect file changes (only when TUI is active)
+					if events != nil {
+						changes := detectFileChanges(beforeFiles)
+						if len(changes) > 0 {
+							emit(events, Event{Kind: EventFileChanges, StepIndex: idx, Changes: changes})
+						}
 					}
 
 					// Save artifact
@@ -697,7 +707,10 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		fmt.Printf("→ Running step: %s\n", step.Name)
 	}
 
-	beforeFiles := scanDirectory(".")
+	var beforeFiles map[string]time.Time
+	if events != nil {
+		beforeFiles = scanDirectory(".")
+	}
 
 	agent := p.Agent
 	if step.Agent != nil {
@@ -763,9 +776,11 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 
 	ctx.Outputs[step.Name] = output
 
-	changes := detectFileChanges(beforeFiles)
-	if len(changes) > 0 {
-		emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
+	if events != nil {
+		changes := detectFileChanges(beforeFiles)
+		if len(changes) > 0 {
+			emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
+		}
 	}
 
 	if step.SaveTo != "" {

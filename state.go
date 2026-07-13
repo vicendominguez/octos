@@ -1,3 +1,5 @@
+// Package main — state.go manages pipeline checkpoint persistence.
+// State is saved after each successful step to enable resumption via --resume.
 package main
 
 import (

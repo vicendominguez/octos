@@ -1,3 +1,6 @@
+// Package main — dryrun.go validates a pipeline without executing agents.
+// It checks binary availability, interpolation references, condition syntax,
+// artifact dependencies, and reports the execution plan.
 package main
 
 import (

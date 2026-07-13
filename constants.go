@@ -1,3 +1,5 @@
+// Package main — constants.go defines shared constants and directory paths
+// used across the application (artifact dirs, state dirs, failure policies, limits).
 package main
 
 import "path/filepath"

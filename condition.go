@@ -1,3 +1,5 @@
+// Package main — condition.go implements parsing and evaluation of step "when"
+// conditions. Supported operators: contains, equals, not_empty.
 package main
 
 import (

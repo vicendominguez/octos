@@ -1,28 +1,20 @@
+// Package main — executor.go implements the pipeline execution engine.
+// It manages agent process lifecycle, step sequencing (serial and parallel),
+// artifact loading/saving, retry logic, and event emission to the TUI.
 package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 )
-
-var ansiRegex = regexp.MustCompile(`\x1b(\[[0-9;?]*[a-zA-Z]|\(B|\)0)`)
-var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*`)
-var controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]`)
-var cursorMovementRegex = regexp.MustCompile(`\x1b\[[0-9]*[ABCDEFGHJKST]`)
-
-
 
 // loadArtifact loads content from artifacts directory
 func loadArtifact(filename string) (string, error) {
@@ -40,68 +32,9 @@ func saveArtifact(filename, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
-// detectFileChanges compares directory state before/after to find changes
-func detectFileChanges(beforeFiles map[string]time.Time) []string {
-	afterFiles := scanDirectory(".")
-	var changes []string
 
-	// Check for new or modified files
-	for path, afterTime := range afterFiles {
-		if beforeTime, exists := beforeFiles[path]; !exists {
-			changes = append(changes, "+ "+path)
-		} else if afterTime.After(beforeTime) {
-			changes = append(changes, "M "+path)
-		}
-	}
 
-	// Check for deleted files
-	for path := range beforeFiles {
-		if _, exists := afterFiles[path]; !exists {
-			changes = append(changes, "- "+path)
-		}
-	}
 
-	return changes
-}
-
-// scanDirectory recursively scans directory and returns file paths with mod times
-func scanDirectory(root string) map[string]time.Time {
-	files := make(map[string]time.Time)
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if strings.Contains(path, "/.") ||
-			strings.Contains(path, "/node_modules/") ||
-			strings.Contains(path, OctosDirSlash) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !d.IsDir() {
-			if info, err := d.Info(); err == nil {
-				files[path] = info.ModTime()
-			}
-		}
-		return nil
-	})
-	return files
-}
-
-func stripANSI(s string) string {
-	// Remove ANSI escape codes (colors, styles)
-	s = ansiRegex.ReplaceAllString(s, "")
-	// Remove cursor movement codes
-	s = cursorMovementRegex.ReplaceAllString(s, "")
-	// Remove spinner characters
-	s = spinnerRegex.ReplaceAllString(s, "")
-	// Remove other control characters (except \n and \t)
-	s = controlCharsRegex.ReplaceAllString(s, "")
-	// Remove carriage returns
-	s = strings.ReplaceAll(s, "\r", "")
-	return s
-}
 
 type PipelineContext struct {
 	Global  map[string]any
@@ -811,69 +744,6 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	return nil
 }
 
-func buildPrompt(ctx *PipelineContext, newTask string) string {
-	var buf bytes.Buffer
-
-	if len(ctx.Global) > 0 {
-		buf.WriteString("=== CONTEXT ===\n")
-		for k, v := range ctx.Global {
-			buf.WriteString(fmt.Sprintf("%s: %v\n", k, v))
-		}
-		buf.WriteString("\n")
-	}
-
-	buf.WriteString("=== TASK ===\n")
-	buf.WriteString(newTask)
-
-	return buf.String()
-}
-
-var unresolvedPlaceholderRegex = regexp.MustCompile(`\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}`)
-
-func interpolate(text string, ctx *PipelineContext) (string, []string) {
-	result := text
-	var warnings []string
-
-	for name, output := range ctx.Outputs {
-		// {{step_name.output}} for step outputs
-		placeholder := fmt.Sprintf("{{%s.output}}", name)
-		result = strings.ReplaceAll(result, placeholder, output)
-		// {{artifact.X}} directly (when stored as ctx.Outputs["artifact.X"])
-		direct := fmt.Sprintf("{{%s}}", name)
-		result = strings.ReplaceAll(result, direct, output)
-	}
-
-	// Interpolate all context values
-	for key, value := range ctx.Global {
-		placeholder := fmt.Sprintf("{{context.%s}}", key)
-		switch v := value.(type) {
-		case []any:
-			var lines []string
-			for _, item := range v {
-				lines = append(lines, fmt.Sprintf("- %v", item))
-			}
-			result = strings.ReplaceAll(result, placeholder, strings.Join(lines, "\n"))
-		default:
-			result = strings.ReplaceAll(result, placeholder, fmt.Sprintf("%v", v))
-		}
-	}
-
-	// Collect unresolved placeholders as warnings
-	if matches := unresolvedPlaceholderRegex.FindAllString(result, -1); len(matches) > 0 {
-		for _, m := range matches {
-			warnings = append(warnings, fmt.Sprintf("warning: unresolved placeholder %s\n  hint: check spelling or ensure the referenced step runs before this one", m))
-		}
-	}
-
-	return result, warnings
-}
-
-func buildArgs(agent AgentConfig, prompt string) []string {
-	if agent.Stdin {
-		return agent.Args
-	}
-	return append(slices.Clone(agent.Args), prompt)
-}
 
 func runAgent(ctx context.Context, agent AgentConfig, prompt string, runner *PipelineRunner, stepIdx int) (string, error) {
 	var cmd *exec.Cmd

@@ -1,3 +1,7 @@
+// Package main — process_unix.go provides platform-specific process management
+// for Unix systems. It detaches child agent processes from the controlling terminal
+// to prevent SIGTTIN/SIGTTOU signals from suspending the TUI.
+
 //go:build !windows
 
 package main

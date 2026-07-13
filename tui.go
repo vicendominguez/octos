@@ -1,3 +1,6 @@
+// Package main — tui.go implements the interactive terminal UI using Bubble Tea.
+// It provides a cyberpunk-themed dashboard with step progress, live output streaming,
+// file change tracking, and keyboard navigation.
 package main
 
 import (

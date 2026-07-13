@@ -1,3 +1,6 @@
+// Package main — pipeline.go defines the core data structures (Pipeline, Step,
+// AgentConfig) and handles YAML loading, environment variable expansion,
+// prompt_file resolution, and pipeline validation including cycle detection.
 package main
 
 import (

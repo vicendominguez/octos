@@ -1,3 +1,6 @@
+// Package main — graph.go renders an ASCII DAG visualization of the pipeline.
+// It computes topological levels from step dependencies and draws nodes with
+// fan-out/fan-in connector lines.
 package main
 
 import (

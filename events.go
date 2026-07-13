@@ -1,3 +1,6 @@
+// Package main — events.go defines the event types used for communication
+// between the pipeline executor and the TUI. Events are sent through a channel
+// to provide real-time progress updates.
 package main
 
 import "time"

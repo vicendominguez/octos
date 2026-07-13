@@ -79,33 +79,26 @@ func TestInterpolateResolvesArtifacts(t *testing.T) {
 		},
 	}
 
-	// {{artifact.plan}} should resolve directly
-	result, warnings := interpolate("Plan: {{artifact.plan}}", ctx)
-	if result != "Plan: the plan content" {
-		t.Errorf("artifact.plan: got %q, want %q", result, "Plan: the plan content")
-	}
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
-	}
-
-	// {{artifact.analysis}} should resolve directly
-	result, warnings = interpolate("Analysis: {{artifact.analysis}}", ctx)
-	if result != "Analysis: the analysis content" {
-		t.Errorf("artifact.analysis: got %q, want %q", result, "Analysis: the analysis content")
-	}
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got %v", warnings)
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"artifact.plan resolves", "Plan: {{artifact.plan}}", "Plan: the plan content"},
+		{"artifact.analysis resolves", "Analysis: {{artifact.analysis}}", "Analysis: the analysis content"},
+		{"step.output resolves", "{{step1.output}}", "step1 output"},
+		{"step shorthand resolves", "{{step1}}", "step1 output"},
 	}
 
-	// {{step1.output}} still works
-	result, _ = interpolate("{{step1.output}}", ctx)
-	if result != "step1 output" {
-		t.Errorf("step1.output: got %q, want %q", result, "step1 output")
-	}
-
-	// {{step1}} also resolves directly (step name without .output)
-	result, _ = interpolate("{{step1}}", ctx)
-	if result != "step1 output" {
-		t.Errorf("direct step1: got %q, want %q", result, "step1 output")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, warnings := interpolate(tt.input, ctx)
+			if result != tt.want {
+				t.Errorf("interpolate(%q) = %q, want %q", tt.input, result, tt.want)
+			}
+			if len(warnings) != 0 {
+				t.Errorf("expected no warnings, got %v", warnings)
+			}
+		})
 	}
 }

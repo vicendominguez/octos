@@ -135,8 +135,15 @@ steps:
 	}
 }
 
-func TestOnFailureInvalidValue(t *testing.T) {
-	yaml := `
+func TestOnFailureValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		wantInErr string
+	}{
+		{
+			name: "invalid on_failure value",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -146,23 +153,12 @@ steps:
   - name: step1
     prompt: "hello"
     on_failure: invalid_value
-`
-	f, _ := os.CreateTemp("", "pipeline-invalid-onfailure-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	_, err := LoadPipeline(f.Name())
-	if err == nil {
-		t.Fatal("expected validation error for invalid on_failure value")
-	}
-	if !contains(err.Error(), "on_failure") {
-		t.Errorf("error should mention on_failure, got: %v", err)
-	}
-}
-
-func TestMaxRetriesWithoutRetryPolicy(t *testing.T) {
-	yaml := `
+`,
+			wantInErr: "on_failure",
+		},
+		{
+			name: "max_retries without retry policy",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -172,18 +168,26 @@ steps:
   - name: step1
     prompt: "hello"
     max_retries: 3
-`
-	f, _ := os.CreateTemp("", "pipeline-maxretries-nopolicy-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	_, err := LoadPipeline(f.Name())
-	if err == nil {
-		t.Fatal("expected validation error for max_retries without on_failure: retry")
+`,
+			wantInErr: "max_retries",
+		},
 	}
-	if !contains(err.Error(), "max_retries") {
-		t.Errorf("error should mention max_retries, got: %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, _ := os.CreateTemp("", "pipeline-onfailure-*.yaml")
+			f.WriteString(tt.yaml)
+			f.Close()
+			defer os.Remove(f.Name())
+
+			_, err := LoadPipeline(f.Name())
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !contains(err.Error(), tt.wantInErr) {
+				t.Errorf("error should contain %q, got: %v", tt.wantInErr, err)
+			}
+		})
 	}
 }
 

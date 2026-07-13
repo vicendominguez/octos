@@ -82,7 +82,7 @@ func DryRun(p *Pipeline) error {
 				if producer, ok := producedArtifacts[loadFile]; ok {
 					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", loadFile, producer))
 				} else {
-					warnings = append(warnings, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, loadFile))
+					errors = append(errors, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, loadFile))
 				}
 			}
 		}
@@ -90,7 +90,7 @@ func DryRun(p *Pipeline) error {
 		// Check interpolation in prompt
 		promptWarnings := checkInterpolation(step.Prompt, ctx, producedOutputs, producedArtifacts)
 		for _, w := range promptWarnings {
-			warnings = append(warnings, fmt.Sprintf("step '%s': %s", step.Name, w))
+			errors = append(errors, fmt.Sprintf("step '%s': %s", step.Name, w))
 		}
 
 		// Mark this step's outputs as available for subsequent steps

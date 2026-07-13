@@ -7,8 +7,9 @@ import (
 
 func TestDryRunPipelines(t *testing.T) {
 	tests := []struct {
-		name string
-		yaml string
+		name      string
+		yaml      string
+		expectErr bool
 	}{
 		{
 			name: "valid pipeline",
@@ -43,7 +44,7 @@ steps:
 `,
 		},
 		{
-			name: "missing context var (warning only)",
+			name:      "missing context var (now an error)",
 			yaml: `
 agent:
   cmd: "echo"
@@ -54,6 +55,7 @@ steps:
   - name: step1
     prompt: "use {{context.nonexistent}}"
 `,
+			expectErr: true,
 		},
 		{
 			name: "stdin agent",
@@ -117,8 +119,14 @@ steps:
 			}
 
 			err = DryRun(p)
-			if err != nil {
-				t.Fatalf("expected no error, got: %v", err)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got: %v", err)
+				}
 			}
 		})
 	}

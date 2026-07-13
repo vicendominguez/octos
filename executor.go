@@ -448,7 +448,11 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 						content, err := loadArtifact(loadFile)
 						if err != nil {
 							msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", s.Name, loadFile)
-							emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: msg})
+							if events != nil {
+								emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: msg})
+							} else if !silent {
+								fmt.Fprintln(os.Stderr, msg)
+							}
 						} else {
 							artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 							// Note: artifacts map access is safe here since parallel steps at same level
@@ -467,7 +471,11 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					ctx.mu.Unlock()
 
 					for _, w := range warnings {
-						emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: w})
+						if events != nil {
+							emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: w})
+						} else if !silent {
+							fmt.Fprintln(os.Stderr, w)
+						}
 					}
 
 					emit(events, Event{Kind: EventStepStart, StepIndex: idx, Prompt: prompt})
@@ -618,7 +626,11 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		content, err := loadArtifact(loadFile)
 		if err != nil {
 			msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", step.Name, loadFile)
-			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
+			if events != nil {
+				emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
+			} else if !silent {
+				fmt.Fprintln(os.Stderr, msg)
+			}
 		} else {
 			artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 			artifacts[artifactName] = content
@@ -630,7 +642,11 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	fullPrompt := buildPrompt(ctx, prompt)
 
 	for _, w := range warnings {
-		emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: w})
+		if events != nil {
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: w})
+		} else if !silent {
+			fmt.Fprintln(os.Stderr, w)
+		}
 	}
 
 	emit(events, Event{Kind: EventStepStart, StepIndex: i, Prompt: prompt})

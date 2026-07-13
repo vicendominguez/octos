@@ -1185,48 +1185,37 @@ func (m *TUIModel) renderGraphPopup(baseContent string) string {
 }
 
 func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program, runner *PipelineRunner) {
-	RunPipelineWithOptions(p, RunOptions{
-		OnStart: func(stepIndex int, prompt string) {
-			if program != nil {
-				program.Send(stepStartMsg{index: stepIndex, prompt: prompt})
-			}
-		},
-		OnOutput: func(stepIndex int, output string) {
-			if program != nil {
-				program.Send(stepOutputMsg{index: stepIndex, output: output})
-			}
-		},
-		OnComplete: func(stepIndex int, duration time.Duration, err error) {
-			if program != nil {
-				program.Send(stepCompleteMsg{index: stepIndex, duration: duration, err: err})
-			}
-		},
-		OnStream: func(stepIndex int, line string) {
-			if program != nil {
-				program.Send(stepStreamMsg{index: stepIndex, line: line})
-			}
-		},
-		OnFileChanges: func(stepIndex int, changes []string) {
-			if program != nil {
-				program.Send(fileChangesMsg{index: stepIndex, changes: changes})
-			}
-		},
-		OnRetry: func(stepIndex int, attempt int, maxRetries int) {
-			if program != nil {
-				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
-			}
-		},
-		OnSkip: func(stepIndex int) {
-			if program != nil {
-				program.Send(stepSkipMsg{index: stepIndex})
-			}
-		},
-		OnDone: func() {
-			if program != nil {
-				program.Send(pipelineDoneMsg{})
-			}
-		},
-		Runner: runner,
-		Resume: resume,
-	})
+	events := make(chan Event, 100)
+
+	go func() {
+		RunPipelineWithOptions(p, RunOptions{
+			Events: events,
+			Runner: runner,
+			Resume: resume,
+		})
+	}()
+
+	for ev := range events {
+		if program == nil {
+			continue
+		}
+		switch ev.Kind {
+		case EventStepStart:
+			program.Send(stepStartMsg{index: ev.StepIndex, prompt: ev.Prompt})
+		case EventStepOutput:
+			program.Send(stepOutputMsg{index: ev.StepIndex, output: ev.Output})
+		case EventStepComplete:
+			program.Send(stepCompleteMsg{index: ev.StepIndex, duration: ev.Duration, err: ev.Err})
+		case EventStepStream:
+			program.Send(stepStreamMsg{index: ev.StepIndex, line: ev.Line})
+		case EventFileChanges:
+			program.Send(fileChangesMsg{index: ev.StepIndex, changes: ev.Changes})
+		case EventStepRetry:
+			program.Send(stepRetryMsg{index: ev.StepIndex, attempt: ev.Attempt, maxRetries: ev.MaxRetries})
+		case EventStepSkip:
+			program.Send(stepSkipMsg{index: ev.StepIndex})
+		case EventDone:
+			program.Send(pipelineDoneMsg{})
+		}
+	}
 }

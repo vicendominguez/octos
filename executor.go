@@ -143,11 +143,7 @@ type PipelineContext struct {
 	mu      sync.Mutex
 }
 
-type ProgressCallback func(stepIndex int, output string)
-type StepCallback func(stepIndex int, duration time.Duration, err error)
-type StreamCallback func(stepIndex int, line string)
-type FileChangesCallback func(stepIndex int, changes []string)
-type RetryCallback func(stepIndex int, attempt int, maxRetries int)
+
 
 // PipelineRunner manages pipeline execution and exposes control over the active agent process.
 type PipelineRunner struct {
@@ -198,19 +194,12 @@ func (r *PipelineRunner) consumeKilled(index int) bool {
 	return k
 }
 
-// RunOptions configures pipeline execution behavior and callbacks.
+// RunOptions configures pipeline execution behavior and event delivery.
 type RunOptions struct {
-	Ctx           context.Context
-	OnStart       ProgressCallback
-	OnOutput      ProgressCallback
-	OnComplete    StepCallback
-	OnStream      StreamCallback
-	OnFileChanges FileChangesCallback
-	OnRetry       RetryCallback
-	OnSkip        func(stepIndex int)
-	OnDone        func()
-	Runner        *PipelineRunner
-	Resume        bool
+	Ctx    context.Context
+	Events chan<- Event
+	Runner *PipelineRunner
+	Resume bool
 }
 
 func RunPipeline(p *Pipeline) error {
@@ -226,14 +215,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	if runCtx == nil {
 		runCtx = context.Background()
 	}
-	onStart := opts.OnStart
-	onOutput := opts.OnOutput
-	onComplete := opts.OnComplete
-	onStream := opts.OnStream
-	onFileChanges := opts.OnFileChanges
-	onRetry := opts.OnRetry
-	onSkip := opts.OnSkip
-	onDone := opts.OnDone
+	events := opts.Events
 	runner := opts.Runner
 	resume := opts.Resume
 
@@ -249,7 +231,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 	startStep := 0
 	startTime := time.Now()
-	silent := onStart != nil || onComplete != nil // Silent mode if callbacks are set
+	silent := events != nil // Silent mode if events channel is set
 	artifacts := make(map[string]string)
 
 	// Load state if resuming
@@ -267,9 +249,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	// Use parallel execution when dependencies are declared
 	if p.hasNeeds() && startStep == 0 {
 		err := runPipelineByLevels(runCtx, p, opts, ctx, artifacts, silent, startTime)
-		if onDone != nil {
-			onDone()
-		}
+		emit(events, Event{Kind: EventDone})
 		if err == nil {
 			if clearErr := ClearState(p.File); clearErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to clear state: %v\n", clearErr)
@@ -284,8 +264,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		// Check condition
 		if step.When != "" && !isValidConditionSyntax(step.When) {
 			msg := fmt.Sprintf("warning: step '%s' has unparseable 'when' condition: '%s'\n  hint: supported: 'X contains Y', 'X equals Y', 'X not_empty'", step.Name, step.When)
-			if onStream != nil {
-				onStream(i, msg)
+			if events != nil {
+				emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 			} else if !silent {
 				fmt.Fprintln(os.Stderr, msg)
 			}
@@ -294,9 +274,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			if !silent {
 				fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
 			}
-			if onSkip != nil {
-				onSkip(i)
-			}
+			emit(events, Event{Kind: EventStepSkip, StepIndex: i})
 			continue
 		}
 
@@ -305,8 +283,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			content, err := loadArtifact(loadFile)
 			if err != nil {
 				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in %s/)\n  hint: was the producing step skipped or is this the first run?", step.Name, loadFile, ArtifactsDir)
-				if onStream != nil {
-					onStream(i, msg)
+				if events != nil {
+					emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 				} else if !silent {
 					fmt.Fprintln(os.Stderr, msg)
 				}
@@ -321,18 +299,16 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		prompt, warnings := interpolate(step.Prompt, ctx)
 		fullPrompt := buildPrompt(ctx, prompt)
 
-		// Route warnings: to TUI stream if available, otherwise stderr
+		// Route warnings: to event stream if available, otherwise stderr
 		for _, w := range warnings {
-			if onStream != nil {
-				onStream(i, w)
+			if events != nil {
+				emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: w})
 			} else {
 				fmt.Fprintln(os.Stderr, w)
 			}
 		}
 
-		if onStart != nil {
-			onStart(i, prompt)
-		}
+		emit(events, Event{Kind: EventStepStart, StepIndex: i, Prompt: prompt})
 
 		start := time.Now()
 		if !silent {
@@ -366,9 +342,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		retryPrompt := fullPrompt
 		for {
 			attempts++
-			if onStream != nil {
+			if events != nil {
 				output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
-					onStream(i, line)
+					emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: line})
 				}, runner, i)
 			} else {
 				output, err = runAgent(runCtx, agent, retryPrompt, runner, i)
@@ -380,8 +356,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 			// If killed via R key (manual retry), restart immediately
 			if runner != nil && runner.consumeKilled(i) {
-				if onStream != nil {
-					onStream(i, "⟳ Manual retry requested — restarting step...")
+				if events != nil {
+					emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: "⟳ Manual retry requested — restarting step..."})
 				}
 				retryPrompt = fullPrompt
 				attempts = 0
@@ -393,11 +369,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 				if !silent {
 					fmt.Printf("⚠ Step %s failed (attempt %d/%d), retrying...\n", step.Name, attempts, maxRetries+1)
 				}
-				if onRetry != nil {
-					onRetry(i, attempts, maxRetries+1)
-				}
-				if onStream != nil {
-					onStream(i, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
+				emit(events, Event{Kind: EventStepRetry, StepIndex: i, Attempt: attempts, MaxRetries: maxRetries + 1})
+				if events != nil {
+					emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err)})
 				}
 				// Inject error into retry prompt
 				retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
@@ -415,12 +389,10 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 				if !silent {
 					fmt.Printf("⊘ Step %s failed, skipping (on_failure: skip): %v\n", step.Name, err)
 				}
-				if onStream != nil {
-					onStream(i, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
+				if events != nil {
+					emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: fmt.Sprintf("⊘ Step skipped due to failure: %v", err)})
 				}
-				if onComplete != nil {
-					onComplete(i, duration, nil)
-				}
+				emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration})
 				// Save state and continue to next step
 				state := &PipelineState{
 					PipelineFile:      p.File,
@@ -430,20 +402,16 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 				}
 				if saveErr := SaveState(state); saveErr != nil {
 					msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
-					if onStream != nil {
-						onStream(i, msg)
+					if events != nil {
+						emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 					} else {
 						fmt.Fprintln(os.Stderr, msg)
 					}
 				}
 				continue
 			default: // fail_fast or retry exhausted
-				if onComplete != nil {
-					onComplete(i, duration, err)
-				}
-				if onDone != nil {
-					onDone()
-				}
+				emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration, Err: err})
+				emit(events, Event{Kind: EventDone})
 				return fmt.Errorf("error: step '%s' failed (duration %s)\n  agent: %s %v\n  cause: %w", step.Name, duration.Round(time.Millisecond), agent.Cmd, agent.Args, err)
 			}
 		}
@@ -452,8 +420,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 		// Detect file changes
 		changes := detectFileChanges(beforeFiles)
-		if onFileChanges != nil && len(changes) > 0 {
-			onFileChanges(i, changes)
+		if len(changes) > 0 {
+			emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
 		}
 
 		// Save artifact if specified
@@ -467,13 +435,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			}
 		}
 
-		if onOutput != nil {
-			onOutput(i, output)
-		}
-
-		if onComplete != nil {
-			onComplete(i, duration, nil)
-		}
+		emit(events, Event{Kind: EventStepOutput, StepIndex: i, Output: output})
+		emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration})
 
 		// Save state after each successful step
 		state := &PipelineState{
@@ -484,8 +447,8 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		}
 		if saveErr := SaveState(state); saveErr != nil {
 			msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
-			if onStream != nil {
-				onStream(i, msg)
+			if events != nil {
+				emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 			} else {
 				fmt.Fprintln(os.Stderr, msg)
 			}
@@ -500,22 +463,14 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	if clearErr := ClearState(p.File); clearErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to clear state: %v\n", clearErr)
 	}
-	if onDone != nil {
-		onDone()
-	}
+	emit(events, Event{Kind: EventDone})
 	return nil
 }
 
 // runPipelineByLevels executes steps grouped by topological level.
 // Steps in the same level run in parallel.
 func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, ctx *PipelineContext, artifacts map[string]string, silent bool, startTime time.Time) error {
-	onStart := opts.OnStart
-	onOutput := opts.OnOutput
-	onComplete := opts.OnComplete
-	onStream := opts.OnStream
-	onFileChanges := opts.OnFileChanges
-	onRetry := opts.OnRetry
-	onSkip := opts.OnSkip
+	events := opts.Events
 	runner := opts.Runner
 
 	// Build parent map and assign levels
@@ -576,9 +531,7 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					if !silent {
 						fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
 					}
-					if onSkip != nil {
-						onSkip(i)
-					}
+					emit(events, Event{Kind: EventStepSkip, StepIndex: i})
 					continue
 				}
 
@@ -591,9 +544,7 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 						content, err := loadArtifact(loadFile)
 						if err != nil {
 							msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", s.Name, loadFile)
-							if onStream != nil {
-								onStream(idx, msg)
-							}
+							emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: msg})
 						} else {
 							artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 							// Note: artifacts map access is safe here since parallel steps at same level
@@ -612,14 +563,10 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					ctx.mu.Unlock()
 
 					for _, w := range warnings {
-						if onStream != nil {
-							onStream(idx, w)
-						}
+						emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: w})
 					}
 
-					if onStart != nil {
-						onStart(idx, prompt)
-					}
+					emit(events, Event{Kind: EventStepStart, StepIndex: idx, Prompt: prompt})
 
 					start := time.Now()
 
@@ -645,9 +592,9 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					retryPrompt := fullPrompt
 					for {
 						attempts++
-						if onStream != nil {
+						if events != nil {
 							output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
-								onStream(idx, line)
+								emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: line})
 							}, runner, idx)
 						} else {
 							output, err = runAgent(runCtx, agent, retryPrompt, runner, idx)
@@ -658,21 +605,15 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 						}
 
 						if runner != nil && runner.consumeKilled(idx) {
-							if onStream != nil {
-								onStream(idx, "⟳ Manual retry requested — restarting step...")
-							}
+							emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: "⟳ Manual retry requested — restarting step..."})
 							retryPrompt = fullPrompt
 							attempts = 0
 							continue
 						}
 
 						if onFailure == FailurePolicyRetry && attempts <= maxRetries {
-							if onRetry != nil {
-								onRetry(idx, attempts, maxRetries+1)
-							}
-							if onStream != nil {
-								onStream(idx, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
-							}
+							emit(events, Event{Kind: EventStepRetry, StepIndex: idx, Attempt: attempts, MaxRetries: maxRetries + 1})
+							emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err)})
 							retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
 							continue
 						}
@@ -682,28 +623,22 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					duration := time.Since(start)
 
 					if err != nil && onFailure == FailurePolicySkip {
-						if onStream != nil {
-							onStream(idx, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
-						}
-						if onComplete != nil {
-							onComplete(idx, duration, nil)
-						}
+						emit(events, Event{Kind: EventStepStream, StepIndex: idx, Line: fmt.Sprintf("⊘ Step skipped due to failure: %v", err)})
+						emit(events, Event{Kind: EventStepComplete, StepIndex: idx, Duration: duration})
 						results <- stepResult{idx, "", nil}
 						return
 					}
 
 					if err != nil {
-						if onComplete != nil {
-							onComplete(idx, duration, err)
-						}
+						emit(events, Event{Kind: EventStepComplete, StepIndex: idx, Duration: duration, Err: err})
 						results <- stepResult{idx, "", err}
 						return
 					}
 
 					// Detect file changes
 					changes := detectFileChanges(beforeFiles)
-					if onFileChanges != nil && len(changes) > 0 {
-						onFileChanges(idx, changes)
+					if len(changes) > 0 {
+						emit(events, Event{Kind: EventFileChanges, StepIndex: idx, Changes: changes})
 					}
 
 					// Save artifact
@@ -711,12 +646,8 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 						saveArtifact(s.SaveTo, output)
 					}
 
-					if onOutput != nil {
-						onOutput(idx, output)
-					}
-					if onComplete != nil {
-						onComplete(idx, duration, nil)
-					}
+					emit(events, Event{Kind: EventStepOutput, StepIndex: idx, Output: output})
+					emit(events, Event{Kind: EventStepComplete, StepIndex: idx, Duration: duration})
 
 					results <- stepResult{idx, output, nil}
 				}(i, step)
@@ -748,8 +679,8 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 			}
 			if saveErr := SaveState(state); saveErr != nil {
 				msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
-				if onStream != nil {
-					onStream(lastIdx, msg)
+				if events != nil {
+					emit(events, Event{Kind: EventStepStream, StepIndex: lastIdx, Line: msg})
 				} else {
 					fmt.Fprintln(os.Stderr, msg)
 				}
@@ -763,22 +694,14 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 // runSingleStep executes a single step (used within level-based execution).
 func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, ctx *PipelineContext, artifacts map[string]string, silent bool, startTime time.Time) error {
 	step := p.Steps[i]
-	onStart := opts.OnStart
-	onOutput := opts.OnOutput
-	onComplete := opts.OnComplete
-	onStream := opts.OnStream
-	onFileChanges := opts.OnFileChanges
-	onRetry := opts.OnRetry
-	onSkip := opts.OnSkip
+	events := opts.Events
 	runner := opts.Runner
 
 	if !evaluateCondition(step.When, ctx.Outputs, artifacts) {
 		if !silent {
 			fmt.Printf("⊘ Skipping step: %s (condition not met)\n", step.Name)
 		}
-		if onSkip != nil {
-			onSkip(i)
-		}
+		emit(events, Event{Kind: EventStepSkip, StepIndex: i})
 		return nil
 	}
 
@@ -786,9 +709,7 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		content, err := loadArtifact(loadFile)
 		if err != nil {
 			msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s'", step.Name, loadFile)
-			if onStream != nil {
-				onStream(i, msg)
-			}
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 		} else {
 			artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 			artifacts[artifactName] = content
@@ -800,14 +721,10 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	fullPrompt := buildPrompt(ctx, prompt)
 
 	for _, w := range warnings {
-		if onStream != nil {
-			onStream(i, w)
-		}
+		emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: w})
 	}
 
-	if onStart != nil {
-		onStart(i, prompt)
-	}
+	emit(events, Event{Kind: EventStepStart, StepIndex: i, Prompt: prompt})
 
 	start := time.Now()
 	if !silent {
@@ -836,9 +753,9 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	retryPrompt := fullPrompt
 	for {
 		attempts++
-		if onStream != nil {
+		if events != nil {
 			output, err = runAgentWithStreaming(runCtx, agent, retryPrompt, func(line string) {
-				onStream(i, line)
+				emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: line})
 			}, runner, i)
 		} else {
 			output, err = runAgent(runCtx, agent, retryPrompt, runner, i)
@@ -849,21 +766,15 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		}
 
 		if runner != nil && runner.consumeKilled(i) {
-			if onStream != nil {
-				onStream(i, "⟳ Manual retry requested — restarting step...")
-			}
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: "⟳ Manual retry requested — restarting step..."})
 			retryPrompt = fullPrompt
 			attempts = 0
 			continue
 		}
 
 		if onFailure == FailurePolicyRetry && attempts <= maxRetries {
-			if onRetry != nil {
-				onRetry(i, attempts, maxRetries+1)
-			}
-			if onStream != nil {
-				onStream(i, fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err))
-			}
+			emit(events, Event{Kind: EventStepRetry, StepIndex: i, Attempt: attempts, MaxRetries: maxRetries + 1})
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: fmt.Sprintf("⚠ Attempt %d/%d failed: %v — retrying...", attempts, maxRetries+1, err)})
 			retryPrompt = fmt.Sprintf("[RETRY %d/%d] Previous attempt failed with: %v\n\n%s", attempts+1, maxRetries+1, err, fullPrompt)
 			continue
 		}
@@ -875,16 +786,10 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	if err != nil {
 		switch onFailure {
 		case FailurePolicySkip:
-			if onStream != nil {
-				onStream(i, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
-			}
-			if onComplete != nil {
-				onComplete(i, duration, nil)
-			}
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: fmt.Sprintf("⊘ Step skipped due to failure: %v", err)})
+			emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration})
 		default:
-			if onComplete != nil {
-				onComplete(i, duration, err)
-			}
+			emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration, Err: err})
 			return fmt.Errorf("error: step '%s' failed\n  cause: %w", step.Name, err)
 		}
 		return nil
@@ -893,20 +798,16 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	ctx.Outputs[step.Name] = output
 
 	changes := detectFileChanges(beforeFiles)
-	if onFileChanges != nil && len(changes) > 0 {
-		onFileChanges(i, changes)
+	if len(changes) > 0 {
+		emit(events, Event{Kind: EventFileChanges, StepIndex: i, Changes: changes})
 	}
 
 	if step.SaveTo != "" {
 		saveArtifact(step.SaveTo, output)
 	}
 
-	if onOutput != nil {
-		onOutput(i, output)
-	}
-	if onComplete != nil {
-		onComplete(i, duration, nil)
-	}
+	emit(events, Event{Kind: EventStepOutput, StepIndex: i, Output: output})
+	emit(events, Event{Kind: EventStepComplete, StepIndex: i, Duration: duration})
 
 	state := &PipelineState{
 		PipelineFile:      p.File,
@@ -916,8 +817,8 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	}
 	if saveErr := SaveState(state); saveErr != nil {
 		msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
-		if onStream != nil {
-			onStream(i, msg)
+		if events != nil {
+			emit(events, Event{Kind: EventStepStream, StepIndex: i, Line: msg})
 		} else {
 			fmt.Fprintln(os.Stderr, msg)
 		}

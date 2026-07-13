@@ -45,143 +45,197 @@ func RenderGraph(steps []Step, stepStates []StepState) string {
 		levelGroups[lvl] = append(levelGroups[lvl], step.Name)
 	}
 
+	// Calculate node label widths and positions
+	const gap = 3 // space between nodes on same level
+	nodeWidth := make(map[string]int)
+	for _, step := range steps {
+		icon := GetStepIcon(statusMap[step.Name])
+		label := fmt.Sprintf("[%s %s]", icon, step.Name)
+		nodeWidth[step.Name] = len([]rune(label))
+	}
+
+	// Calculate the center position of each node
+	nodeCenter := make(map[string]int)
+	for _, group := range levelGroups {
+		pos := 0
+		for i, name := range group {
+			w := nodeWidth[name]
+			nodeCenter[name] = pos + w/2
+			pos += w
+			if i < len(group)-1 {
+				pos += gap
+			}
+		}
+	}
+
 	var out strings.Builder
 
 	for lvl := 0; lvl <= maxLevel; lvl++ {
 		group := levelGroups[lvl]
 
-		// Render connector lines from previous level
+		// Draw connectors from previous level
 		if lvl > 0 {
 			prevGroup := levelGroups[lvl-1]
-			connector := renderConnector(prevGroup, group, children)
-			if connector != "" {
-				out.WriteString(connector)
-			}
+			connector := buildConnector(prevGroup, group, children, nodeCenter)
+			out.WriteString(connector)
 		}
 
-		// Render nodes at this level
-		out.WriteString(renderNodeRow(group, statusMap))
+		// Draw node row
+		out.WriteString(buildNodeRow(group, statusMap))
 		out.WriteString("\n")
 	}
 
 	return out.String()
 }
 
-// renderNodeRow renders a row of nodes with status icons.
-func renderNodeRow(names []string, statusMap map[string]StepStatus) string {
-	if len(names) == 1 {
-		icon := GetStepIcon(statusMap[names[0]])
-		return fmt.Sprintf("  [%s %s]", icon, names[0])
-	}
-
-	// Multiple nodes on same level
+// buildNodeRow renders a row of nodes.
+func buildNodeRow(names []string, statusMap map[string]StepStatus) string {
+	const gap = 3
 	parts := make([]string, len(names))
 	for i, name := range names {
 		icon := GetStepIcon(statusMap[name])
 		parts[i] = fmt.Sprintf("[%s %s]", icon, name)
 	}
-	return "  " + strings.Join(parts, "   ")
+	return strings.Join(parts, strings.Repeat(" ", gap))
 }
 
-// renderConnector draws simple ASCII lines between levels.
-func renderConnector(prevNames []string, currNames []string, children map[string][]string) string {
-	// Single → Single: simple pipe
-	if len(prevNames) == 1 && len(currNames) == 1 {
-		return "    │\n"
+// buildConnector draws lines between a parent level and child level.
+func buildConnector(prevGroup []string, currGroup []string, children map[string][]string, nodeCenter map[string]int) string {
+	// Single → Single
+	if len(prevGroup) == 1 && len(currGroup) == 1 {
+		center := nodeCenter[prevGroup[0]]
+		return placeCh(center, '|') + "\n"
 	}
 
 	// Single → Multiple (fan-out)
-	if len(prevNames) == 1 && len(currNames) > 1 {
-		return renderFanOutSimple(currNames)
+	if len(prevGroup) == 1 && len(currGroup) > 1 {
+		return buildFanOut(prevGroup[0], currGroup, nodeCenter)
 	}
 
 	// Multiple → Single (fan-in)
-	if len(prevNames) > 1 && len(currNames) == 1 {
-		return renderFanInSimple(prevNames)
+	if len(prevGroup) > 1 && len(currGroup) == 1 {
+		return buildFanIn(prevGroup, currGroup[0], children, nodeCenter)
 	}
 
-	// Multiple → Multiple or mixed: just pipes
-	return "    │\n"
+	// Fallback: pipe from first parent
+	center := nodeCenter[prevGroup[0]]
+	return placeCh(center, '|') + "\n"
 }
 
-func renderFanOutSimple(names []string) string {
-	n := len(names)
-	if n == 0 {
-		return ""
-	}
-
+// buildFanOut: one parent splits to multiple children.
+func buildFanOut(parent string, childNames []string, nodeCenter map[string]int) string {
+	parentCenter := nodeCenter[parent]
 	var out strings.Builder
 
-	// Center pipe from parent
-	out.WriteString("    │\n")
-
-	// Branch line: ┌───┬───┐ or similar
-	out.WriteString("  ")
-	for i := 0; i < n; i++ {
-		if i == 0 {
-			out.WriteString("┌")
-		} else if i == n-1 {
-			out.WriteString("┐")
-		} else {
-			out.WriteString("┬")
-		}
-		if i < n-1 {
-			out.WriteString("───────")
-		}
-	}
+	// Vertical pipe from parent center
+	out.WriteString(placeCh(parentCenter, '|'))
 	out.WriteString("\n")
 
-	// Down pipes
-	out.WriteString("  ")
-	for i := 0; i < n; i++ {
-		out.WriteString("│")
-		if i < n-1 {
-			out.WriteString("       ")
-		}
+	// Horizontal branch line: from parent center or leftmost child (whichever is left) to rightmost child
+	leftmost := nodeCenter[childNames[0]]
+	rightmost := nodeCenter[childNames[len(childNames)-1]]
+
+	// Extend to include parent center
+	start := leftmost
+	if parentCenter < start {
+		start = parentCenter
 	}
+
+	width := rightmost + 1
+	line := make([]byte, width)
+	for i := range line {
+		line[i] = ' '
+	}
+	// Fill horizontal between start and rightmost
+	for i := start; i <= rightmost; i++ {
+		line[i] = '-'
+	}
+	// Place connector at parent center
+	line[parentCenter] = '+'
+	// Place connectors at each child center
+	for _, name := range childNames {
+		pos := nodeCenter[name]
+		line[pos] = '+'
+	}
+	out.Write(line)
+	out.WriteString("\n")
+
+	// Down pipes at each child position
+	pipeLine := make([]byte, width)
+	for i := range pipeLine {
+		pipeLine[i] = ' '
+	}
+	for _, name := range childNames {
+		pos := nodeCenter[name]
+		pipeLine[pos] = '|'
+	}
+	out.Write(pipeLine)
 	out.WriteString("\n")
 
 	return out.String()
 }
 
-func renderFanInSimple(names []string) string {
-	n := len(names)
-	if n == 0 {
-		return ""
-	}
-
+// buildFanIn: multiple parents merge to one child.
+func buildFanIn(parentNames []string, child string, children map[string][]string, nodeCenter map[string]int) string {
+	childCenter := nodeCenter[child]
 	var out strings.Builder
 
-	// Up pipes
-	out.WriteString("  ")
-	for i := 0; i < n; i++ {
-		out.WriteString("│")
-		if i < n-1 {
-			out.WriteString("       ")
-		}
+	leftmost := nodeCenter[parentNames[0]]
+	rightmost := nodeCenter[parentNames[len(parentNames)-1]]
+
+	width := rightmost + 1
+	if childCenter >= width {
+		width = childCenter + 1
 	}
+
+	// Up pipes at each parent position
+	pipeLine := make([]byte, width)
+	for i := range pipeLine {
+		pipeLine[i] = ' '
+	}
+	for _, name := range parentNames {
+		pos := nodeCenter[name]
+		pipeLine[pos] = '|'
+	}
+	out.Write(pipeLine)
 	out.WriteString("\n")
 
-	// Merge line: └───┴───┘
-	out.WriteString("  ")
-	for i := 0; i < n; i++ {
-		if i == 0 {
-			out.WriteString("└")
-		} else if i == n-1 {
-			out.WriteString("┘")
-		} else {
-			out.WriteString("┴")
-		}
-		if i < n-1 {
-			out.WriteString("───────")
-		}
+	// Horizontal merge line
+	line := make([]byte, width)
+	for i := range line {
+		line[i] = ' '
 	}
+	// Extend to include child center
+	start := leftmost
+	if childCenter < start {
+		start = childCenter
+	}
+	for i := start; i <= rightmost; i++ {
+		line[i] = '-'
+	}
+	// Place connectors at parent centers
+	for _, name := range parentNames {
+		pos := nodeCenter[name]
+		line[pos] = '+'
+	}
+	// Place connector at child center
+	line[childCenter] = '+'
+	out.Write(line)
 	out.WriteString("\n")
 
-	// Center pipe to child
-	out.WriteString("    │\n")
+	// Down pipe to child center
+	out.WriteString(placeCh(childCenter, '|'))
+	out.WriteString("\n")
 
 	return out.String()
+}
+
+// placeCh returns a string with a character placed at a specific column position.
+func placeCh(col int, ch rune) string {
+	if col <= 0 {
+		return string(ch)
+	}
+	return strings.Repeat(" ", col) + string(ch)
 }
 
 // assignLevels computes the topological level of each step.

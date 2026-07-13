@@ -1,3 +1,5 @@
+// Package main — state.go manages pipeline checkpoint persistence.
+// State is saved after each successful step to enable resumption via --resume.
 package main
 
 import (
@@ -16,7 +18,7 @@ type PipelineState struct {
 }
 
 func getStateDir() string {
-	return filepath.Join(".octos", "state")
+	return StateDir
 }
 
 func getStateFile(pipelineFile string) string {

@@ -1,3 +1,6 @@
+// Package main — main.go is the CLI entry point for octos.
+// It parses flags, loads the pipeline YAML, and dispatches to either the TUI
+// or headless execution mode.
 package main
 
 import (

@@ -5,8 +5,15 @@ import (
 	"testing"
 )
 
-func TestDryRunValidPipeline(t *testing.T) {
-	yaml := `
+func TestDryRunPipelines(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		expectErr bool
+	}{
+		{
+			name: "valid pipeline",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -17,25 +24,11 @@ steps:
     prompt: "hello"
   - name: step2
     prompt: "based on {{step1.output}}"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestDryRunWithConditions(t *testing.T) {
-	yaml := `
+`,
+		},
+		{
+			name: "with conditions",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -48,25 +41,11 @@ steps:
   - name: conditional
     when: "{{check.output}} contains yes"
     prompt: "do the thing"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-cond-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestDryRunMissingContextVar(t *testing.T) {
-	yaml := `
+`,
+		},
+		{
+			name:      "missing context var (now an error)",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -75,26 +54,12 @@ context:
 steps:
   - name: step1
     prompt: "use {{context.nonexistent}}"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-missing-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Should produce warnings but not fail (missing context is a warning)
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error (warning only), got: %v", err)
-	}
-}
-
-func TestDryRunWithStdinAgent(t *testing.T) {
-	yaml := `
+`,
+			expectErr: true,
+		},
+		{
+			name: "stdin agent",
+			yaml: `
 agent:
   cmd: "cat"
   args: []
@@ -104,25 +69,11 @@ context:
 steps:
   - name: step1
     prompt: "hello via stdin"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-stdin-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestDryRunArtifactChain(t *testing.T) {
-	yaml := `
+`,
+		},
+		{
+			name: "artifact chain",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -135,25 +86,11 @@ steps:
   - name: implement
     load_from: analysis.txt
     prompt: "implement based on {{artifact.analysis}}"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-artifacts-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-}
-
-func TestDryRunInvalidConditionSyntax(t *testing.T) {
-	yaml := `
+`,
+		},
+		{
+			name: "invalid condition syntax (warning only)",
+			yaml: `
 agent:
   cmd: "echo"
   args: ["ok"]
@@ -165,21 +102,33 @@ steps:
   - name: step2
     when: "some garbage condition"
     prompt: "conditional step"
-`
-	f, _ := os.CreateTemp("", "pipeline-dryrun-badwhen-*.yaml")
-	f.WriteString(yaml)
-	f.Close()
-	defer os.Remove(f.Name())
-
-	p, err := LoadPipeline(f.Name())
-	if err != nil {
-		t.Fatal(err)
+`,
+		},
 	}
 
-	// Should produce a warning about unparseable when but not error
-	err = DryRun(p)
-	if err != nil {
-		t.Fatalf("expected no error (warning only), got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, _ := os.CreateTemp("", "pipeline-dryrun-*.yaml")
+			f.WriteString(tt.yaml)
+			f.Close()
+			defer os.Remove(f.Name())
+
+			p, err := LoadPipeline(f.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			err = DryRun(p)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got: %v", err)
+				}
+			}
+		})
 	}
 }
 

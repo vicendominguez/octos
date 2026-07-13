@@ -1,3 +1,5 @@
+// Package main — styles.go defines the cyberpunk-themed lipgloss styles,
+// color palette, layout constants, and step status icon/style helpers for the TUI.
 package main
 
 import (

@@ -1,3 +1,6 @@
+// Package main — tui.go implements the interactive terminal UI using Bubble Tea.
+// It provides a cyberpunk-themed dashboard with step progress, live output streaming,
+// file change tracking, and keyboard navigation.
 package main
 
 import (
@@ -96,6 +99,7 @@ type TUIModel struct {
 	hasGit         bool
 	userScrolling  bool
 	showPrompt     bool
+	showGraph      bool
 	focusedPanel   FocusedPanel
 	maxLoops       int
 	currentLoop    int
@@ -173,7 +177,7 @@ func NewTUIModel(p *Pipeline, resume bool) TUIModel {
 		hasGit:      exec.Command("git", "--version").Run() == nil,
 		maxLoops:    0,
 		currentLoop: 1,
-		runner:      &PipelineRunner{},
+		runner:      &PipelineRunner{activeCmds: make(map[int]*exec.Cmd), killedSteps: make(map[int]bool)},
 	}
 	m.refreshGitBranch()
 
@@ -253,8 +257,11 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.steps[msg.index].Prompt = msg.prompt
 			m.currentStep = msg.index
 			m.statusMsg = fmt.Sprintf("Running step %d/%d: %s", msg.index+1, len(m.steps), m.steps[msg.index].Name)
-			m.scrollToStep(msg.index)
-			m.userScrolling = false
+			// Auto-follow: move selection to new running step unless user navigated away
+			if !m.userScrolling {
+				m.selectedStep = msg.index
+				m.scrollToStep(msg.index)
+			}
 		}
 		return m, nil
 
@@ -268,9 +275,8 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.isValidStepIndex(msg.index) {
 			m.steps[msg.index].Output += msg.line + "\n"
 			// Cap output to prevent memory leak in long-running pipelines
-			const maxOutputBytes = 512 * 1024
-			if len(m.steps[msg.index].Output) > maxOutputBytes {
-				m.steps[msg.index].Output = m.steps[msg.index].Output[len(m.steps[msg.index].Output)-maxOutputBytes:]
+			if len(m.steps[msg.index].Output) > MaxOutputBytes {
+				m.steps[msg.index].Output = m.steps[msg.index].Output[len(m.steps[msg.index].Output)-MaxOutputBytes:]
 			}
 		}
 		return m, nil
@@ -350,6 +356,13 @@ func (m *TUIModel) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.showPrompt {
 			m.showPrompt = false
 		}
+		if m.showGraph {
+			m.showGraph = false
+		}
+		return m, nil
+	
+	case "g":
+		m.showGraph = !m.showGraph
 		return m, nil
 	
 	case "enter":
@@ -437,9 +450,7 @@ func (m *TUIModel) buildStepsView(showTitle bool, showDuration bool) string {
 		
 		stepsView.WriteString(line)
 		
-		if !m.pipelineEnded && i == m.currentStep && step.Status == StatusRunning {
-			stepsView.WriteString(" ◀")
-		} else if m.pipelineEnded && i == m.selectedStep {
+		if i == m.selectedStep {
 			stepsView.WriteString(" ◀")
 		}
 		stepsView.WriteString("\n")
@@ -463,10 +474,7 @@ func (m *TUIModel) refreshGitBranch() {
 }
 
 func (m *TUIModel) getDisplayStep() int {
-	if m.pipelineEnded {
-		return m.selectedStep
-	}
-	return m.currentStep
+	return m.selectedStep
 }
 
 func (m *TUIModel) toggleFocusedPanel() {
@@ -504,9 +512,9 @@ func (m *TUIModel) handleRetryStepKey() (tea.Model, tea.Cmd) {
 	if m.pipelineEnded || m.runner == nil {
 		return m, nil
 	}
-	if m.currentStep < len(m.steps) && m.steps[m.currentStep].Status == StatusRunning {
-		m.statusMsg = fmt.Sprintf("Retrying step: %s", m.steps[m.currentStep].Name)
-		m.runner.KillCurrentStep()
+	if m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Status == StatusRunning {
+		m.statusMsg = fmt.Sprintf("Retrying step: %s", m.steps[m.selectedStep].Name)
+		m.runner.KillStep(m.selectedStep)
 	}
 	return m, nil
 }
@@ -516,8 +524,9 @@ func (m *TUIModel) handleDownKey() (tea.Model, tea.Cmd) {
 		m.promptView.ScrollDown(1)
 		return m, nil
 	}
-	if m.pipelineEnded && m.selectedStep < len(m.steps)-1 {
+	if m.selectedStep < len(m.steps)-1 {
 		m.selectedStep++
+		m.userScrolling = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -528,8 +537,9 @@ func (m *TUIModel) handleUpKey() (tea.Model, tea.Cmd) {
 		m.promptView.ScrollUp(1)
 		return m, nil
 	}
-	if m.pipelineEnded && m.selectedStep > 0 {
+	if m.selectedStep > 0 {
 		m.selectedStep--
+		m.userScrolling = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -614,6 +624,11 @@ func (m *TUIModel) View() tea.View {
 		// Render popup if showing prompt
 		if m.showPrompt && m.pipelineEnded && m.selectedStep < len(m.steps) && m.steps[m.selectedStep].Prompt != "" {
 			result = m.renderPromptPopup(result)
+		}
+
+		// Render graph overlay
+		if m.showGraph {
+			result = m.renderGraphPopup(result)
 		}
 		
 		content = result
@@ -726,19 +741,19 @@ func (m *TUIModel) renderFooter() string {
 func (m *TUIModel) buildHelpText() string {
 	if m.pipelineEnded {
 		if m.width >= wideTerminalWidth {
-			return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [r] Restart │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+			return "⌨  [↑↓/jk] Navigate │ [Enter] View prompt │ [g] Graph │ [r] Restart │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
 		} else if m.width >= mediumTerminalWidth {
-			return "⌨  [↑↓/jk] Navigate │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [q] Quit"
+			return "⌨  [↑↓/jk] Navigate │ [Enter] Prompt │ [g] Graph │ [r] Restart │ [Tab] Panel │ [q] Quit"
 		} else {
-			return "⌨  [↑↓/jk] Nav │ [Enter] Prompt │ [r] Restart │ [Tab] Panel │ [q] Quit"
+			return "⌨  [↑↓/jk] Nav │ [Enter] Prompt │ [g] Graph │ [r] Restart │ [q] Quit"
 		}
 	} else {
 		if m.width >= extraWideTerminalWidth {
-			return "⌨  [R] Retry step │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [Mouse wheel] Scroll │ [q] Quit"
+			return "⌨  [R] Retry step │ [g] Graph │ [Tab] Switch panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
 		} else if m.width >= narrowTerminalWidth {
-			return "⌨  [R] Retry │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [Ctrl+d/u] Page │ [q] Quit"
+			return "⌨  [R] Retry │ [g] Graph │ [Tab] Panel │ [Ctrl+j/k] Scroll │ [q] Quit"
 		} else {
-			return "⌨  [R] Retry │ [Tab] Panel │ [q] Quit"
+			return "⌨  [R] Retry │ [g] Graph │ [q] Quit"
 		}
 	}
 }
@@ -817,13 +832,9 @@ func (m *TUIModel) renderContent(width, contentHeight int) string {
 	m.outputView.SetContent(outputContent)
 
 	// Auto-scroll
-	if !m.pipelineEnded && displayStep == m.currentStep && m.steps[displayStep].Status == StatusRunning {
-		if m.userScrolling && m.outputView.AtBottom() {
-			m.userScrolling = false
-		}
-		if !m.userScrolling {
-			m.outputView.GotoBottom()
-		}
+	// Auto-scroll output if viewing a running step
+	if displayStep < len(m.steps) && m.steps[displayStep].Status == StatusRunning {
+		m.outputView.GotoBottom()
 	}
 
 	// File changes
@@ -1121,49 +1132,93 @@ func (m *TUIModel) renderPromptPopup(baseContent string) string {
 	)
 }
 
+func (m *TUIModel) renderGraphPopup(baseContent string) string {
+	popupWidth := int(float64(m.width) * popupWidthRatio)
+	if popupWidth > NarrowModeWidth {
+		popupWidth = NarrowModeWidth
+	}
+	popupHeight := int(float64(m.height) * popupHeightRatio)
+	if popupHeight > PopupMaxHeight {
+		popupHeight = PopupMaxHeight
+	}
+
+	// Create popup style
+	popupStyle := lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(neonCyan).
+		Padding(1, 2).
+		Width(popupWidth).
+		Height(popupHeight)
+
+	// Title
+	popupTitle := boldCyanStyle.Render("DEPENDENCY GRAPH")
+
+	// Render the graph
+	graphContent := RenderGraph(m.pipeline.Steps, m.steps)
+	if graphContent == "" {
+		graphContent = "No dependencies defined (linear pipeline)"
+	}
+
+	// Footer
+	footer := lipgloss.NewStyle().
+		Foreground(neonYellow).
+		Faint(true).
+		Render("[g/Esc] Close")
+
+	popupContent := lipgloss.JoinVertical(
+		lipgloss.Left,
+		popupTitle,
+		"",
+		graphContent,
+		"",
+		footer,
+	)
+
+	popup := popupStyle.Render(popupContent)
+
+	return lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		popup,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("0"))),
+	)
+}
+
 func runPipelineWithProgram(p *Pipeline, resume bool, program *tea.Program, runner *PipelineRunner) {
-	RunPipelineWithOptions(p, RunOptions{
-		OnStart: func(stepIndex int, prompt string) {
-			if program != nil {
-				program.Send(stepStartMsg{index: stepIndex, prompt: prompt})
-			}
-		},
-		OnOutput: func(stepIndex int, output string) {
-			if program != nil {
-				program.Send(stepOutputMsg{index: stepIndex, output: output})
-			}
-		},
-		OnComplete: func(stepIndex int, duration time.Duration, err error) {
-			if program != nil {
-				program.Send(stepCompleteMsg{index: stepIndex, duration: duration, err: err})
-			}
-		},
-		OnStream: func(stepIndex int, line string) {
-			if program != nil {
-				program.Send(stepStreamMsg{index: stepIndex, line: line})
-			}
-		},
-		OnFileChanges: func(stepIndex int, changes []string) {
-			if program != nil {
-				program.Send(fileChangesMsg{index: stepIndex, changes: changes})
-			}
-		},
-		OnRetry: func(stepIndex int, attempt int, maxRetries int) {
-			if program != nil {
-				program.Send(stepRetryMsg{index: stepIndex, attempt: attempt, maxRetries: maxRetries})
-			}
-		},
-		OnSkip: func(stepIndex int) {
-			if program != nil {
-				program.Send(stepSkipMsg{index: stepIndex})
-			}
-		},
-		OnDone: func() {
-			if program != nil {
-				program.Send(pipelineDoneMsg{})
-			}
-		},
-		Runner: runner,
-		Resume: resume,
-	})
+	events := make(chan Event, 100)
+
+	go func() {
+		RunPipelineWithOptions(p, RunOptions{
+			Events: events,
+			Runner: runner,
+			Resume: resume,
+		})
+	}()
+
+	for ev := range events {
+		if program == nil {
+			continue
+		}
+		switch ev.Kind {
+		case EventStepStart:
+			program.Send(stepStartMsg{index: ev.StepIndex, prompt: ev.Prompt})
+		case EventStepOutput:
+			program.Send(stepOutputMsg{index: ev.StepIndex, output: ev.Output})
+		case EventStepComplete:
+			program.Send(stepCompleteMsg{index: ev.StepIndex, duration: ev.Duration, err: ev.Err})
+		case EventStepStream:
+			program.Send(stepStreamMsg{index: ev.StepIndex, line: ev.Line})
+		case EventFileChanges:
+			program.Send(fileChangesMsg{index: ev.StepIndex, changes: ev.Changes})
+		case EventStepRetry:
+			program.Send(stepRetryMsg{index: ev.StepIndex, attempt: ev.Attempt, maxRetries: ev.MaxRetries})
+		case EventStepSkip:
+			program.Send(stepSkipMsg{index: ev.StepIndex})
+		case EventDone:
+			program.Send(pipelineDoneMsg{})
+		}
+	}
 }

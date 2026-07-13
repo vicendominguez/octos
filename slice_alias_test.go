@@ -50,11 +50,11 @@ func TestRunAgentReuseSameConfig(t *testing.T) {
 	}
 
 	// Run twice with same agent
-	out1, err := runAgent(context.Background(), agent, "world1", nil)
+	out1, err := runAgent(context.Background(), agent, "world1", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out2, err := runAgent(context.Background(), agent, "world2", nil)
+	out2, err := runAgent(context.Background(), agent, "world2", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

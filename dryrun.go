@@ -1,3 +1,6 @@
+// Package main — dryrun.go validates a pipeline without executing agents.
+// It checks binary availability, interpolation references, condition syntax,
+// artifact dependencies, and reports the execution plan.
 package main
 
 import (
@@ -52,6 +55,11 @@ func DryRun(p *Pipeline) error {
 			}
 		}
 
+		// Show needs
+		if len(step.Needs) > 0 {
+			notes = append(notes, fmt.Sprintf("needs: [%s]", strings.Join(step.Needs, ", ")))
+		}
+
 		// Evaluate when condition
 		if step.When != "" {
 			canEvaluate := canEvaluateCondition(step.When, producedOutputs)
@@ -68,13 +76,13 @@ func DryRun(p *Pipeline) error {
 		}
 
 		// Check load_from
-		if step.LoadFrom != "" {
-			artifactPath := filepath.Join(".octos", "artifacts", step.LoadFrom)
+		for _, loadFile := range step.LoadFrom {
+			artifactPath := filepath.Join(ArtifactsDir, loadFile)
 			if _, err := os.Stat(artifactPath); err != nil {
-				if producer, ok := producedArtifacts[step.LoadFrom]; ok {
-					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", step.LoadFrom, producer))
+				if producer, ok := producedArtifacts[loadFile]; ok {
+					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", loadFile, producer))
 				} else {
-					warnings = append(warnings, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, step.LoadFrom))
+					errors = append(errors, fmt.Sprintf("step '%s': load_from '%s' not found and no prior step produces it", step.Name, loadFile))
 				}
 			}
 		}
@@ -82,7 +90,7 @@ func DryRun(p *Pipeline) error {
 		// Check interpolation in prompt
 		promptWarnings := checkInterpolation(step.Prompt, ctx, producedOutputs, producedArtifacts)
 		for _, w := range promptWarnings {
-			warnings = append(warnings, fmt.Sprintf("step '%s': %s", step.Name, w))
+			errors = append(errors, fmt.Sprintf("step '%s': %s", step.Name, w))
 		}
 
 		// Mark this step's outputs as available for subsequent steps
@@ -189,20 +197,7 @@ func canEvaluateCondition(condition string, producedOutputs map[string]bool) boo
 	return true
 }
 
-// isValidConditionSyntax checks if a when condition uses supported syntax
-func isValidConditionSyntax(condition string) bool {
-	cond := strings.TrimSpace(condition)
-	if strings.Contains(cond, " contains ") {
-		return true
-	}
-	if strings.Contains(cond, " equals ") {
-		return true
-	}
-	if cond == "not_empty" || strings.HasSuffix(cond, " not_empty") {
-		return true
-	}
-	return false
-}
+
 
 // checkInterpolation validates placeholders in a prompt without resolving runtime values
 func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[string]bool, producedArtifacts map[string]string) []string {
@@ -221,8 +216,8 @@ func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[s
 		}
 
 		// artifact.X — check if a prior step produces it
-		if strings.HasPrefix(ref, "artifact.") {
-			artifactName := strings.TrimPrefix(ref, "artifact.")
+		if strings.HasPrefix(ref, ArtifactKeyPrefix) {
+			artifactName := strings.TrimPrefix(ref, ArtifactKeyPrefix)
 			found := false
 			for file, _ := range producedArtifacts {
 				nameWithoutExt := strings.TrimSuffix(file, filepath.Ext(file))
@@ -234,7 +229,7 @@ func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[s
 			if !found {
 				// Check if the artifact file exists on disk
 				for _, ext := range []string{".txt", ".md", ""} {
-					path := filepath.Join(".octos", "artifacts", artifactName+ext)
+					path := filepath.Join(ArtifactsDir, artifactName+ext)
 					if _, err := os.Stat(path); err == nil {
 						found = true
 						break

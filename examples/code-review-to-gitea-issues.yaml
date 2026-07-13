@@ -1,136 +1,119 @@
 # Automated code review pipeline that analyzes repos and creates
-# labeled Gitea issues for findings (updates, improvements, concerns).
+# labeled issues for findings (updates, improvements, concerns).
 # Skips duplicates by checking existing open issues before creating.
 #
-# Labels created automatically: update, improvement, best-practice, concern
+# Features:
+#   - Parallel setup: cloning + label creation run simultaneously
+#   - Multi-artifact loading for issue deduplication
+#   - Environment variable defaults for easy configuration
 #
 # Usage:
-#   1. Export env vars: GITEA_URL, GITEA_TOKEN
-#   2. Optionally set GITEA_OWNER and REPOS
-#   3. Run: octos code-review-to-gitea-issues.yaml
-#
-# Env vars:
-#   GITEA_URL    — Gitea instance URL (required)
-#   GITEA_TOKEN  — Personal access token (required)
-#   GITEA_OWNER  — User/org owning the repos (default: your-user)
-#   REPOS        — Comma-separated repo list (default: all configured)
+#   GITEA_URL=http://gitea:3000 GITEA_TOKEN=xxx octos code-review-to-gitea-issues.yaml
 
 agent:
   cmd: "kiro-cli"
   args: ["chat", "--no-interactive", "--trust-all-tools"]
 
 context:
-  role: "Senior software engineer doing code review and prospection"
   gitea_url: "${GITEA_URL}"
   gitea_token: "${GITEA_TOKEN}"
   gitea_owner: "${GITEA_OWNER:-your-user}"
-  repos: "${REPOS:-project-alpha,project-beta,project-gamma}"
-  labels:
-    - "update"
-    - "improvement"
-    - "best-practice"
-    - "concern"
+  repos: "${REPOS:-project-alpha,project-beta}"
   principles:
     - "KISS: Keep It Simple Stupid"
     - "YAGNI: You Ain't Gonna Need It"
     - "Only suggest actionable, concrete changes"
     - "Each issue must be a single, specific finding"
-    - "Do not suggest over-engineering or unnecessary abstractions"
 
 steps:
+  # ─── PHASE 1: Parallel setup ─────────────────────────────────────────
+  # Clone repos and setup labels simultaneously
+
   - name: clone-repos
     prompt: |
-      Clone these repos from Gitea into /tmp/octos-review/ (remove that dir first if exists):
+      Clone these repos from Gitea into /tmp/octos-review/ (remove dir first if exists):
 
-      Repos to clone (comma-separated list): {{context.repos}}
+      Repos: {{context.repos}}
 
-      For each repo in that list:
+      For each repo:
       git clone --depth 1 {{context.gitea_url}}/{{context.gitea_owner}}/<repo>.git /tmp/octos-review/<repo>
 
-      After cloning, list the file tree of each repo (no .git dirs). Output the tree for each.
-
-  - name: analyze-repos
-    prompt: |
-      Analyze each repo in /tmp/octos-review/. For each repo, read all source files and check:
-
-      1. **Updates**: outdated dependencies (go.mod, requirements.txt, package.json), old Go/Python versions
-      2. **Improvements**: code that could be simpler following KISS/YAGNI principles
-      3. **Best practices**: missing error handling, no tests, hardcoded values, missing docs, security issues
-      4. **Concerns**: architectural problems, potential bugs, race conditions
-
-      Principles to follow:
-      {{context.principles}}
-
-      Output a JSON array with this structure (one entry per finding):
-      ```json
-      [
-        {
-          "repo": "repo-name",
-          "label": "update|improvement|best-practice|concern",
-          "title": "Short descriptive title",
-          "body": "Detailed description with file references and suggested fix"
-        }
-      ]
-      ```
-
-      Be specific. Reference actual files and line numbers. Only report real, actionable findings.
-    save_to: findings.json
+      List the file tree of each repo (no .git dirs).
+    save_to: repo-trees.txt
 
   - name: setup-labels
     prompt: |
-      Create these labels in each repo from this list: {{context.repos}}
-      Use curl with token authentication. Skip if they already exist.
+      Create these labels in each repo from: {{context.repos}}
+      Skip if they already exist.
 
-      Labels to create (with colors):
+      Labels:
       - "update" color "#0075ca"
       - "improvement" color "#a2eeef"
       - "best-practice" color "#7057ff"
       - "concern" color "#d73a4a"
 
       API: {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
-      Auth: -H "Authorization: token {{context.gitea_token}}"
+      Authorization: token {{context.gitea_token}}
 
-      For each repo, first GET existing labels, then POST only missing ones.
+      GET existing labels first, POST only missing ones.
 
   - name: fetch-existing-issues
     prompt: |
-      For each repo in this list: {{context.repos}}
-      Fetch ALL open issues from Gitea.
+      For each repo in: {{context.repos}}
+      Fetch ALL open issues.
 
       API: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues?state=open&type=issues&limit=50
-      Auth: -H "Authorization: token {{context.gitea_token}}"
+      Authorization: token {{context.gitea_token}}
 
-      Output a JSON object mapping repo name to list of existing issue titles.
+      Output a JSON object: {"repo-name": ["issue title 1", "issue title 2", ...]}
     save_to: existing-issues.json
 
-  - name: create-issues
-    load_from: findings.json
+  # ─── PHASE 2: Analyze (needs cloned repos) ───────────────────────────
+
+  - name: analyze-repos
+    needs: ["clone-repos"]
+    load_from: repo-trees.txt
     prompt: |
-      Using the findings from the analysis:
+      Analyze each repo in /tmp/octos-review/. Read all source files and check:
+
+      1. **Updates**: outdated deps, old language versions
+      2. **Improvements**: code that violates KISS/YAGNI
+      3. **Best practices**: missing error handling, no tests, hardcoded values
+      4. **Concerns**: architectural problems, potential bugs
+
+      Principles: {{context.principles}}
+
+      Output JSON array:
+      [{"repo": "name", "label": "update|improvement|best-practice|concern", "title": "Short title", "body": "Details with file refs"}]
+
+      Be specific. Reference files and lines. Only real, actionable findings.
+    save_to: findings.json
+
+  # ─── PHASE 3: Create issues (needs analysis + existing issues) ───────
+
+  - name: create-issues
+    needs: ["analyze-repos", "setup-labels", "fetch-existing-issues"]
+    load_from:
+      - findings.json
+      - existing-issues.json
+    prompt: |
+      Findings:
       {{artifact.findings}}
 
-      And the existing open issues:
-      {{fetch-existing-issues.output}}
+      Existing issues (DO NOT create duplicates):
+      {{artifact.existing-issues}}
 
-      IMPORTANT: Do NOT create an issue if an issue with the same or very similar title already exists in that repo. Skip duplicates.
+      For each NEW finding only (skip if similar title exists):
+      1. GET label ID: {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
+      2. POST issue:
+         {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues
+         Authorization: token {{context.gitea_token}}
+         Body: {"title": "<title>", "body": "<body>", "labels": [label_id]}
 
-      For each NEW finding only:
-      1. GET the label ID: GET {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/labels
-      2. POST the issue:
-         API: POST {{context.gitea_url}}/api/v1/repos/{{context.gitea_owner}}/{repo}/issues
-         Auth: -H "Authorization: token {{context.gitea_token}}"
-         Body:
-         ```json
-         {
-           "title": "{finding.title}",
-           "body": "{finding.body}",
-           "labels": [label_id]
-         }
-         ```
-
-      Report: how many created, how many skipped (already existed) per repo.
+      Report: created vs skipped per repo.
 
   - name: cleanup
+    needs: ["create-issues"]
     prompt: |
       Remove /tmp/octos-review/ directory.
-      Then output a final summary: how many issues were created per repo and per label type.
+      Output summary: issues created per repo and per label type.

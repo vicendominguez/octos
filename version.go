@@ -1,4 +1,4 @@
 // Package main — version.go declares the application version constant.
 package main
 
-const Version = "1.2.1"
+const Version = "1.2.2"

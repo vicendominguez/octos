@@ -74,7 +74,7 @@ func DryRun(p *Pipeline) error {
 
 		// Check load_from
 		for _, loadFile := range step.LoadFrom {
-			artifactPath := filepath.Join(".octos", "artifacts", loadFile)
+			artifactPath := filepath.Join(ArtifactsDir, loadFile)
 			if _, err := os.Stat(artifactPath); err != nil {
 				if producer, ok := producedArtifacts[loadFile]; ok {
 					notes = append(notes, fmt.Sprintf("load_from: %s (produced by '%s')", loadFile, producer))
@@ -226,8 +226,8 @@ func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[s
 		}
 
 		// artifact.X — check if a prior step produces it
-		if strings.HasPrefix(ref, "artifact.") {
-			artifactName := strings.TrimPrefix(ref, "artifact.")
+		if strings.HasPrefix(ref, ArtifactKeyPrefix) {
+			artifactName := strings.TrimPrefix(ref, ArtifactKeyPrefix)
 			found := false
 			for file, _ := range producedArtifacts {
 				nameWithoutExt := strings.TrimSuffix(file, filepath.Ext(file))
@@ -239,7 +239,7 @@ func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[s
 			if !found {
 				// Check if the artifact file exists on disk
 				for _, ext := range []string{".txt", ".md", ""} {
-					path := filepath.Join(".octos", "artifacts", artifactName+ext)
+					path := filepath.Join(ArtifactsDir, artifactName+ext)
 					if _, err := os.Stat(path); err == nil {
 						found = true
 						break

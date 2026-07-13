@@ -16,7 +16,7 @@ type PipelineState struct {
 }
 
 func getStateDir() string {
-	return filepath.Join(".octos", "state")
+	return StateDir
 }
 
 func getStateFile(pipelineFile string) string {

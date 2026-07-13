@@ -112,8 +112,7 @@ func LoadPipeline(path string) (*Pipeline, error) {
 	}
 
 	// Ensure artifacts directory exists
-	artifactsDir := filepath.Join(".octos", "artifacts")
-	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+	if err := os.MkdirAll(ArtifactsDir, 0o755); err != nil {
 		return nil, err
 	}
 
@@ -142,10 +141,10 @@ func (p *Pipeline) Validate() error {
 		if step.Prompt == "" {
 			return fmt.Errorf("error: step '%s' has no prompt\n  hint: add 'prompt:' or 'prompt_file:' to the step", step.Name)
 		}
-		if step.OnFailure != "" && step.OnFailure != "retry" && step.OnFailure != "skip" && step.OnFailure != "fail_fast" {
+		if step.OnFailure != "" && step.OnFailure != FailurePolicyRetry && step.OnFailure != FailurePolicySkip && step.OnFailure != FailurePolicyFailFast {
 			return fmt.Errorf("error: step '%s' has invalid on_failure value '%s'\n  hint: must be 'retry', 'skip', or 'fail_fast'", step.Name, step.OnFailure)
 		}
-		if step.MaxRetries > 0 && step.OnFailure != "retry" {
+		if step.MaxRetries > 0 && step.OnFailure != FailurePolicyRetry {
 			return fmt.Errorf("error: step '%s' has max_retries without on_failure: retry\n  hint: add 'on_failure: retry' or remove 'max_retries'", step.Name)
 		}
 

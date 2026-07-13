@@ -60,7 +60,7 @@ func evaluateCondition(condition string, outputs map[string]string, artifacts ma
 
 // loadArtifact loads content from artifacts directory
 func loadArtifact(filename string) (string, error) {
-	path := filepath.Join(".octos", "artifacts", filename)
+	path := filepath.Join(ArtifactsDir, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -70,7 +70,7 @@ func loadArtifact(filename string) (string, error) {
 
 // saveArtifact saves content to artifacts directory
 func saveArtifact(filename, content string) error {
-	path := filepath.Join(".octos", "artifacts", filename)
+	path := filepath.Join(ArtifactsDir, filename)
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -107,7 +107,7 @@ func scanDirectory(root string) map[string]time.Time {
 		}
 		if strings.Contains(path, "/.") ||
 			strings.Contains(path, "/node_modules/") ||
-			strings.Contains(path, "/.octos/") {
+			strings.Contains(path, OctosDirSlash) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -297,7 +297,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		for _, loadFile := range step.LoadFrom {
 			content, err := loadArtifact(loadFile)
 			if err != nil {
-				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in .octos/artifacts/)\n  hint: was the producing step skipped or is this the first run?", step.Name, loadFile)
+				msg := fmt.Sprintf("warning: step '%s' cannot load artifact '%s' (file not found in %s/)\n  hint: was the producing step skipped or is this the first run?", step.Name, loadFile, ArtifactsDir)
 				if onStream != nil {
 					onStream(i, msg)
 				} else if !silent {
@@ -306,7 +306,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			} else {
 				artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 				artifacts[artifactName] = content
-				ctx.Outputs["artifact."+artifactName] = content
+				ctx.Outputs[ArtifactKeyPrefix+artifactName] = content
 			}
 		}
 
@@ -347,10 +347,10 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 		// Determine failure policy
 		onFailure := step.OnFailure
 		if onFailure == "" {
-			onFailure = "fail_fast"
+			onFailure = FailurePolicyFailFast
 		}
 		maxRetries := step.MaxRetries
-		if maxRetries <= 0 && onFailure == "retry" {
+		if maxRetries <= 0 && onFailure == FailurePolicyRetry {
 			maxRetries = 1
 		}
 
@@ -382,7 +382,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			}
 
 			// Agent failed
-			if onFailure == "retry" && attempts <= maxRetries {
+			if onFailure == FailurePolicyRetry && attempts <= maxRetries {
 				if !silent {
 					fmt.Printf("⚠ Step %s failed (attempt %d/%d), retrying...\n", step.Name, attempts, maxRetries+1)
 				}
@@ -404,7 +404,7 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 
 		if err != nil {
 			switch onFailure {
-			case "skip":
+			case FailurePolicySkip:
 				if !silent {
 					fmt.Printf("⊘ Step %s failed, skipping (on_failure: skip): %v\n", step.Name, err)
 				}
@@ -577,7 +577,7 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 							// don't produce artifacts that siblings need
 							ctx.mu.Lock()
 							artifacts[artifactName] = content
-							ctx.Outputs["artifact."+artifactName] = content
+							ctx.Outputs[ArtifactKeyPrefix+artifactName] = content
 							ctx.mu.Unlock()
 						}
 					}
@@ -611,10 +611,10 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 					var err error
 					onFailure := s.OnFailure
 					if onFailure == "" {
-						onFailure = "fail_fast"
+						onFailure = FailurePolicyFailFast
 					}
 					maxRetries := s.MaxRetries
-					if maxRetries <= 0 && onFailure == "retry" {
+					if maxRetries <= 0 && onFailure == FailurePolicyRetry {
 						maxRetries = 1
 					}
 
@@ -643,7 +643,7 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 							continue
 						}
 
-						if onFailure == "retry" && attempts <= maxRetries {
+						if onFailure == FailurePolicyRetry && attempts <= maxRetries {
 							if onRetry != nil {
 								onRetry(idx, attempts, maxRetries+1)
 							}
@@ -658,7 +658,7 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 
 					duration := time.Since(start)
 
-					if err != nil && onFailure == "skip" {
+					if err != nil && onFailure == FailurePolicySkip {
 						if onStream != nil {
 							onStream(idx, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
 						}
@@ -762,7 +762,7 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		} else {
 			artifactName := strings.TrimSuffix(loadFile, filepath.Ext(loadFile))
 			artifacts[artifactName] = content
-			ctx.Outputs["artifact."+artifactName] = content
+			ctx.Outputs[ArtifactKeyPrefix+artifactName] = content
 		}
 	}
 
@@ -795,10 +795,10 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 	var err error
 	onFailure := step.OnFailure
 	if onFailure == "" {
-		onFailure = "fail_fast"
+		onFailure = FailurePolicyFailFast
 	}
 	maxRetries := step.MaxRetries
-	if maxRetries <= 0 && onFailure == "retry" {
+	if maxRetries <= 0 && onFailure == FailurePolicyRetry {
 		maxRetries = 1
 	}
 
@@ -827,7 +827,7 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 			continue
 		}
 
-		if onFailure == "retry" && attempts <= maxRetries {
+		if onFailure == FailurePolicyRetry && attempts <= maxRetries {
 			if onRetry != nil {
 				onRetry(i, attempts, maxRetries+1)
 			}
@@ -844,7 +844,7 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 
 	if err != nil {
 		switch onFailure {
-		case "skip":
+		case FailurePolicySkip:
 			if onStream != nil {
 				onStream(i, fmt.Sprintf("⊘ Step skipped due to failure: %v", err))
 			}

@@ -194,20 +194,7 @@ func canEvaluateCondition(condition string, producedOutputs map[string]bool) boo
 	return true
 }
 
-// isValidConditionSyntax checks if a when condition uses supported syntax
-func isValidConditionSyntax(condition string) bool {
-	cond := strings.TrimSpace(condition)
-	if strings.Contains(cond, " contains ") {
-		return true
-	}
-	if strings.Contains(cond, " equals ") {
-		return true
-	}
-	if cond == "not_empty" || strings.HasSuffix(cond, " not_empty") {
-		return true
-	}
-	return false
-}
+
 
 // checkInterpolation validates placeholders in a prompt without resolving runtime values
 func checkInterpolation(text string, ctx *PipelineContext, producedOutputs map[string]bool, producedArtifacts map[string]string) []string {

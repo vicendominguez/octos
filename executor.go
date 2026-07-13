@@ -22,41 +22,7 @@ var spinnerRegex = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*`)
 var controlCharsRegex = regexp.MustCompile(`[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]`)
 var cursorMovementRegex = regexp.MustCompile(`\x1b\[[0-9]*[ABCDEFGHJKST]`)
 
-// evaluateCondition checks if a when condition is met
-func evaluateCondition(condition string, outputs map[string]string, artifacts map[string]string) bool {
-	if condition == "" {
-		return true
-	}
 
-	// Replace variables
-	cond := condition
-	for name, output := range outputs {
-		cond = strings.ReplaceAll(cond, fmt.Sprintf("{{%s.output}}", name), output)
-	}
-	for name, content := range artifacts {
-		cond = strings.ReplaceAll(cond, fmt.Sprintf("{{artifact.%s}}", name), content)
-	}
-
-	// Evaluate condition by checking operators from the END of the string.
-	// This prevents false matches when interpolated output contains operator keywords.
-	if cond == "not_empty" || strings.HasSuffix(cond, " not_empty") {
-		value := strings.TrimSuffix(cond, " not_empty")
-		value = strings.TrimSpace(value)
-		return value != ""
-	}
-	if idx := strings.LastIndex(cond, " contains "); idx >= 0 {
-		haystack := strings.Trim(cond[:idx], "' \"")
-		needle := strings.Trim(cond[idx+len(" contains "):], "' \"")
-		return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
-	}
-	if idx := strings.LastIndex(cond, " equals "); idx >= 0 {
-		left := strings.Trim(cond[:idx], "' \"")
-		right := strings.Trim(cond[idx+len(" equals "):], "' \"")
-		return left == right
-	}
-
-	return true
-}
 
 // loadArtifact loads content from artifacts directory
 func loadArtifact(filename string) (string, error) {

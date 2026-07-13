@@ -98,6 +98,7 @@ type TUIModel struct {
 	gitBranch      string
 	hasGit         bool
 	userScrolling  bool
+	userNavigated  bool
 	showPrompt     bool
 	showGraph      bool
 	focusedPanel   FocusedPanel
@@ -258,7 +259,7 @@ func (m *TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentStep = msg.index
 			m.statusMsg = fmt.Sprintf("Running step %d/%d: %s", msg.index+1, len(m.steps), m.steps[msg.index].Name)
 			// Auto-follow: move selection to new running step unless user navigated away
-			if !m.userScrolling {
+			if !m.userNavigated {
 				m.selectedStep = msg.index
 				m.scrollToStep(msg.index)
 			}
@@ -526,7 +527,7 @@ func (m *TUIModel) handleDownKey() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedStep < len(m.steps)-1 {
 		m.selectedStep++
-		m.userScrolling = true
+		m.userNavigated = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -539,7 +540,7 @@ func (m *TUIModel) handleUpKey() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedStep > 0 {
 		m.selectedStep--
-		m.userScrolling = true
+		m.userNavigated = true
 		m.scrollToStep(m.selectedStep)
 	}
 	return m, nil
@@ -831,10 +832,15 @@ func (m *TUIModel) renderContent(width, contentHeight int) string {
 	}
 	m.outputView.SetContent(outputContent)
 
-	// Auto-scroll
-	// Auto-scroll output if viewing a running step
+	// Auto-scroll output if viewing a running step and user hasn't scrolled away
 	if displayStep < len(m.steps) && m.steps[displayStep].Status == StatusRunning {
-		m.outputView.GotoBottom()
+		// If user scrolled but is now back at bottom, resume auto-scroll
+		if m.userScrolling && m.outputView.AtBottom() {
+			m.userScrolling = false
+		}
+		if !m.userScrolling {
+			m.outputView.GotoBottom()
+		}
 	}
 
 	// File changes
@@ -1044,6 +1050,7 @@ func (m *TUIModel) restartPipeline() (tea.Model, tea.Cmd) {
 	m.startTime = time.Now()
 	m.endTime = time.Time{}
 	m.userScrolling = false
+	m.userNavigated = false
 	
 	// Reset progress bar (ViewAs is used for rendering, no animation state needed)
 	_ = m.progress.SetPercent(0)

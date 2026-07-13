@@ -111,11 +111,6 @@ func LoadPipeline(path string) (*Pipeline, error) {
 		return nil, err
 	}
 
-	// Ensure artifacts directory exists
-	if err := os.MkdirAll(ArtifactsDir, 0o755); err != nil {
-		return nil, err
-	}
-
 	return &p, nil
 }
 

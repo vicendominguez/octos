@@ -237,6 +237,11 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	runner := opts.Runner
 	resume := opts.Resume
 
+	// Ensure artifacts directory exists before execution begins
+	if err := os.MkdirAll(ArtifactsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create artifacts directory: %w", err)
+	}
+
 	ctx := &PipelineContext{
 		Global:  p.Context,
 		Outputs: make(map[string]string),
@@ -266,7 +271,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			onDone()
 		}
 		if err == nil {
-			ClearState(p.File)
+			if clearErr := ClearState(p.File); clearErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to clear state: %v\n", clearErr)
+			}
 		}
 		return err
 	}
@@ -421,7 +428,14 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 					Outputs:           ctx.Outputs,
 					StartTime:         startTime.Format(time.RFC3339),
 				}
-				SaveState(state)
+				if saveErr := SaveState(state); saveErr != nil {
+					msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
+					if onStream != nil {
+						onStream(i, msg)
+					} else {
+						fmt.Fprintln(os.Stderr, msg)
+					}
+				}
 				continue
 			default: // fail_fast or retry exhausted
 				if onComplete != nil {
@@ -468,7 +482,14 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 			Outputs:           ctx.Outputs,
 			StartTime:         startTime.Format(time.RFC3339),
 		}
-		SaveState(state)
+		if saveErr := SaveState(state); saveErr != nil {
+			msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
+			if onStream != nil {
+				onStream(i, msg)
+			} else {
+				fmt.Fprintln(os.Stderr, msg)
+			}
+		}
 
 		if !silent {
 			fmt.Printf("✓ Step %s completed\n\n", step.Name)
@@ -476,7 +497,9 @@ func RunPipelineWithOptions(p *Pipeline, opts RunOptions) error {
 	}
 
 	// Clear state on completion
-	ClearState(p.File)
+	if clearErr := ClearState(p.File); clearErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to clear state: %v\n", clearErr)
+	}
 	if onDone != nil {
 		onDone()
 	}
@@ -723,7 +746,14 @@ func runPipelineByLevels(runCtx context.Context, p *Pipeline, opts RunOptions, c
 				Outputs:           ctx.Outputs,
 				StartTime:         startTime.Format(time.RFC3339),
 			}
-			SaveState(state)
+			if saveErr := SaveState(state); saveErr != nil {
+				msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
+				if onStream != nil {
+					onStream(lastIdx, msg)
+				} else {
+					fmt.Fprintln(os.Stderr, msg)
+				}
+			}
 		}
 	}
 
@@ -884,7 +914,14 @@ func runSingleStep(runCtx context.Context, p *Pipeline, i int, opts RunOptions, 
 		Outputs:           ctx.Outputs,
 		StartTime:         startTime.Format(time.RFC3339),
 	}
-	SaveState(state)
+	if saveErr := SaveState(state); saveErr != nil {
+		msg := fmt.Sprintf("warning: failed to save state: %v", saveErr)
+		if onStream != nil {
+			onStream(i, msg)
+		} else {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+	}
 
 	if !silent {
 		fmt.Printf("✓ Step %s completed\n\n", step.Name)
